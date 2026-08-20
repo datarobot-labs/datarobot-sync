@@ -171,15 +171,29 @@ func TestVersionCommand(t *testing.T) {
 	assert.Contains(t, out, "go1.")
 }
 
-// Cobra's {{.Name}} is only the first word of Use, which under the dr CLI would print "dr".
-func TestVersionFlagPrintsTheFullProgramName(t *testing.T) {
+// Cobra derives Name() from the first word of Use, and every usage line is built from
+// CommandPath(), which is built from Name(). Under the dr CLI the invocation is two words, so
+// without the display-name annotation the help reads "dr upload <path>" — wrong, and not
+// copy-pasteable.
+func TestUsageTextReadsBackTheInvocation(t *testing.T) {
 	isolate(t)
 	t.Setenv(config.EnvPluginMode, "1")
 
-	code, out, _ := run(t, "--version")
-
+	code, out, _ := run(t, "--help")
 	require.Equal(t, CodeOK, code)
-	assert.Contains(t, out, "dr sync ")
+
+	assert.Contains(t, out, "dr sync [flags]")
+	assert.Contains(t, out, "dr sync [command]")
+	assert.Contains(t, out, `Use "dr sync [command] --help"`)
+
+	// A subcommand inherits the corrected path from its parent.
+	code, subcommand, _ := run(t, "upload", "--help")
+	require.Equal(t, CodeOK, code)
+	assert.Contains(t, subcommand, "dr sync upload <path> [flags]")
+
+	code, versionOut, _ := run(t, "--version")
+	require.Equal(t, CodeOK, code)
+	assert.Contains(t, versionOut, "dr sync ")
 }
 
 func TestCompletionIsAvailable(t *testing.T) {

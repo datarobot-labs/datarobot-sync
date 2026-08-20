@@ -23,8 +23,14 @@ func NewRoot() *cobra.Command {
 	global := &globalFlags{}
 
 	root := &cobra.Command{
-		Use:   programName(),
-		Short: "rsync for the DataRobot Files API",
+		// Use is a single token because cobra derives Name() from the first word of it, and
+		// Name() feeds CommandPath(), which every usage line is built from. Under the dr CLI
+		// the invocation is two words, so the display name goes in the annotation cobra
+		// provides for exactly this (its own tests use "kubectl plugin"). Without it, help
+		// under `dr sync` reads "dr upload <path>".
+		Use:         rootName(),
+		Annotations: map[string]string{cobra.CommandDisplayNameAnnotation: programName()},
+		Short:       "rsync for the DataRobot Files API",
 		Long: "dr-sync makes a local directory and a DataRobot Files container match,\n" +
 			"transferring only the difference, xz-compressed.",
 		Version: version.Short(),
@@ -57,9 +63,8 @@ func NewRoot() *cobra.Command {
 		return Fail(CodeUsage, err)
 	})
 
-	// Not "{{.Name}}": cobra takes only the first word of Use, which under the dr CLI would
-	// print "dr" rather than "dr sync".
-	root.SetVersionTemplate(programName() + " {{.Version}}\n")
+	// DisplayName rather than Name, for the same reason as the annotation above.
+	root.SetVersionTemplate("{{.DisplayName}} {{.Version}}\n")
 
 	root.AddCommand(
 		newInitCommand(global),
@@ -105,7 +110,17 @@ func programName() string {
 		return "dr sync"
 	}
 
-	if len(os.Args) > 0 {
+	return rootName()
+}
+
+// rootName is the single token cobra uses as the command's Name(). It cannot contain a space,
+// which is why the two-word invocation is carried by the display-name annotation instead.
+func rootName() string {
+	if config.RunningAsPlugin() {
+		return "sync"
+	}
+
+	if len(os.Args) > 0 && os.Args[0] != "" {
 		return filepath.Base(os.Args[0])
 	}
 
