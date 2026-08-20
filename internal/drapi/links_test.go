@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,4 +202,42 @@ func TestOpenBlobClassifiesExpiry(t *testing.T) {
 
 	assert.True(t, IsBlobExpired(err), "a 403 on a presigned URL is a refreshable expiry")
 	require.ErrorContains(t, err, "AccessDenied")
+}
+
+// DataRobot's presigned URLs carry an explicit :443, and SigV4 signs the canonical host, which
+// omits the default port. Go sends the Host header exactly as spelled, so leaving the port on
+// produces SignatureDoesNotMatch — a failure the httptest-based tests can never see, because
+// they always listen on a non-default port.
+func TestStripDefaultPort(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"https://s3.us-east-1.amazonaws.com:443/key?X-Amz-Signature=abc": "https://s3.us-east-1.amazonaws.com/key?X-Amz-Signature=abc",
+		"http://example.com:80/key":                                      "http://example.com/key",
+		// A non-default port is part of the address and must survive.
+		"https://example.com:8443/key":   "https://example.com:8443/key",
+		"http://example.com:8080/key":    "http://example.com:8080/key",
+		"https://example.com/key":        "https://example.com/key",
+		"https://[2001:db8::1]:443/key":  "https://[2001:db8::1]/key",
+		"https://[2001:db8::1]:8443/key": "https://[2001:db8::1]:8443/key",
+	}
+
+	for given, want := range cases {
+		got, err := stripDefaultPort(given)
+		require.NoError(t, err)
+		assert.Equal(t, want, got, "input %q", given)
+	}
+}
+
+// The query string carries the signature and must not be re-encoded on the way through.
+func TestStripDefaultPortPreservesQueryVerbatim(t *testing.T) {
+	t.Parallel()
+
+	raw := "https://s3.amazonaws.com:443/k?X-Amz-Credential=AKIA%2F20260820%2Fus-east-1%2Fs3%2Faws4_request" +
+		"&X-Amz-Security-Token=IQoJb3%2F%2F%2F%2B%3D&X-Amz-Signature=deadbeef"
+
+	got, err := stripDefaultPort(raw)
+	require.NoError(t, err)
+
+	assert.Equal(t, strings.Replace(raw, "s3.amazonaws.com:443", "s3.amazonaws.com", 1), got)
 }

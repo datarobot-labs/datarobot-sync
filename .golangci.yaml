@@ -41,6 +41,16 @@ linters:
           list-mode: lax
           allow:
             - ://github.com
+        # Config resolution is the one place that reconciles flags, environment and file, so
+        # viper stays behind it. Reading it from a command would reintroduce the precedence
+        # bugs the single owner exists to prevent. Mirrors the dr CLI's own rule.
+        no-raw-viper:
+          list-mode: lax
+          files:
+            - "!**/internal/config/**"
+          deny:
+            - pkg: github.com/spf13/viper
+              desc: use internal/config, which owns flag/env/file precedence
     errcheck:
       check-blank: true
     staticcheck:

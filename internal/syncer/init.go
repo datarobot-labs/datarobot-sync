@@ -8,7 +8,9 @@ package syncer
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/datarobot/golang-datarobot-filesync/internal/drapi"
@@ -58,6 +60,11 @@ type InitResult struct {
 // yet" special case from every reader, and it means an interrupted first push leaves something
 // coherent behind rather than an empty catalog item nobody can explain.
 func Init(ctx context.Context, client *drapi.Client, reporter interface{ Phase(string, string) }, opts InitOptions) (*InitResult, error) {
+	// Checked first: a rejected tag should not leave an orphan container behind.
+	if err := ValidateTags(opts.Tags); err != nil {
+		return nil, err
+	}
+
 	container, err := client.CreateContainer(ctx)
 	if err != nil {
 		return nil, err
@@ -72,12 +79,18 @@ func Init(ctx context.Context, client *drapi.Client, reporter interface{ Phase(s
 
 	store := NewStore(client, container.ID, metaPrefix)
 
-	if err := applyCatalogMetadata(ctx, client, container.ID, opts); err != nil {
-		return nil, err
-	}
-
-	seeded, err := seedManifest(ctx, store, container.ID, metaPrefix)
+	// From here on the container exists, so any failure has to take it back down again. A
+	// half-created container is worse than none: it clutters the catalog and nobody can tell
+	// what it was for.
+	seeded, err := setUp(ctx, client, store, container.ID, metaPrefix, opts)
 	if err != nil {
+		if cleanupErr := client.DeleteContainer(ctx, container.ID); cleanupErr != nil {
+			// Both failures matter: the first says why the container is unusable, the second
+			// says it is still sitting in the catalog and needs removing by hand.
+			return nil, errors.Join(err, fmt.Errorf("the half-created container %s could not be removed: %w",
+				container.ID, cleanupErr))
+		}
+
 		return nil, err
 	}
 
@@ -86,10 +99,47 @@ func Init(ctx context.Context, client *drapi.Client, reporter interface{ Phase(s
 	return &InitResult{ContainerID: container.ID, Manifest: seeded}, nil
 }
 
+// ErrInvalidTag is a tag the catalog will not accept.
+var ErrInvalidTag = errors.New("invalid catalog tag")
+
+// ValidateTags rejects tags the catalog refuses, so the failure names the rule rather than
+// arriving as a raw 422 after the container has already been created.
+//
+// The dash restriction is not documented anywhere; it was found by having the API reject one.
+func ValidateTags(tags []string) error {
+	for _, tag := range tags {
+		trimmed := strings.TrimSpace(tag)
+
+		if trimmed == "" {
+			return fmt.Errorf("%w: a tag cannot be empty", ErrInvalidTag)
+		}
+
+		if strings.ContainsAny(trimmed, "-") {
+			return fmt.Errorf("%w: %q contains a dash, which the DataRobot catalog rejects", ErrInvalidTag, tag)
+		}
+	}
+
+	return nil
+}
+
+// setUp applies the metadata and writes the seed objects. Split out so its failure has one
+// obvious place to trigger the rollback.
+func setUp(ctx context.Context, client *drapi.Client, store *Store, containerID, metaPrefix string, opts InitOptions) (*manifest.Manifest, error) {
+	if err := applyCatalogMetadata(ctx, client, containerID, opts); err != nil {
+		return nil, err
+	}
+
+	return seedManifest(ctx, store, containerID, metaPrefix)
+}
+
 // applyCatalogMetadata sets the container's name, description and tags when asked.
 func applyCatalogMetadata(ctx context.Context, client *drapi.Client, containerID string, opts InitOptions) error {
 	if opts.Name == "" && opts.Description == "" && len(opts.Tags) == 0 {
 		return nil
+	}
+
+	if err := ValidateTags(opts.Tags); err != nil {
+		return err
 	}
 
 	update := drapi.ContainerUpdate{Name: opts.Name, Description: opts.Description}

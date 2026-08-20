@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -83,7 +84,12 @@ func (l Link) Expiring() bool {
 // The request deliberately carries no Authorization header: S3 answers 400 when a presigned
 // signature and an auth header both appear.
 func (c *Client) OpenBlob(ctx context.Context, signedURL string, offset int64) (io.ReadCloser, int64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, signedURL, nil)
+	target, err := stripDefaultPort(signedURL)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, 0, fmt.Errorf("building blob request: %w", err)
 	}
@@ -137,6 +143,45 @@ func checkBlobStatus(resp *http.Response, offset int64) error {
 		Status: resp.StatusCode,
 		Err:    fmt.Errorf("fetching presigned blob: HTTP %d: %s", resp.StatusCode, truncate(string(snippet), 300)),
 	}
+}
+
+// stripDefaultPort removes an explicit :443 or :80 from a URL's host.
+//
+// This is load-bearing, not cosmetic. DataRobot hands back presigned URLs of the form
+// https://s3.us-east-1.amazonaws.com:443/..., and SigV4 signs the canonical host, which omits
+// the scheme's default port. Go sends the Host header exactly as the URL spells it — port and
+// all — so the signed value and the sent value disagree and S3 answers
+// SignatureDoesNotMatch. curl strips the port itself, which is why the URL works there and
+// nowhere else.
+func stripDefaultPort(raw string) (string, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("parsing presigned URL: %w", err)
+	}
+
+	port := parsed.Port()
+	if port == "" {
+		return raw, nil
+	}
+
+	if (parsed.Scheme == "https" && port != "443") || (parsed.Scheme == "http" && port != "80") {
+		return raw, nil
+	}
+
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return raw, nil
+	}
+
+	host := parsed.Hostname()
+
+	// Hostname() drops the brackets an IPv6 literal needs.
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+
+	parsed.Host = host
+
+	return parsed.String(), nil
 }
 
 // BlobError is a failure fetching a presigned URL. Its body is S3's XML rather than a

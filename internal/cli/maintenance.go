@@ -8,9 +8,10 @@ package cli
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
 	"github.com/datarobot/golang-datarobot-filesync/internal/progress"
@@ -83,129 +84,104 @@ func runCompaction(ctx context.Context, session *session, settings compactSettin
 	return nil
 }
 
-func compactCommand() *Command {
-	return &Command{
-		Name:  "compact",
-		Usage: "<path>",
+func newCompactCommand(global *globalFlags) *cobra.Command {
+	settings := compactSettings{lock: true}
+
+	var noLock bool
+
+	cmd := &cobra.Command{
+		Use:   "compact <path>",
 		Short: "Rewrite sparse packs so their dead weight can be reclaimed",
-		Run:   runCompact,
+		Long: "Rewrite packs whose contents are mostly superseded.\n\n" +
+			"This runs from the local tree, which is what makes it affordable: on a machine with\n" +
+			"a current checkout almost every live member is already on disk, so nothing has to\n" +
+			"be downloaded. It refuses rather than silently turning into a large download when\n" +
+			"the tree is incomplete.",
+		Args: exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			root, err := syncRoot(args)
+			if err != nil {
+				return err
+			}
+
+			session, err := global.open(cmd, true, root)
+			if err != nil {
+				return err
+			}
+
+			defer session.reporter.Close()
+
+			ctx, cancel := global.withTimeout(cmd.Context())
+			defer cancel()
+
+			settings.root = root
+			settings.jobs = global.jobs
+			settings.lock = !noLock
+			settings.dryRun = global.dryRun
+
+			return runCompaction(ctx, session, settings)
+		},
 	}
-}
 
-func runCompact(ctx context.Context, env *Env, args []string) error {
-	var (
-		common          commonFlags
-		threshold       float64
-		level           int
-		packInputMax    int64
-		bigFile         int64
-		sliceSize       int64
-		uploadJobs      int
-		tempDir         string
-		keepGenerations int
-		gcGrace         time.Duration
-		noLock          bool
-		leaseTTL        time.Duration
-		force           bool
-	)
-
-	set := flag.NewFlagSet("compact", flag.ContinueOnError)
-	set.SetOutput(env.Stderr)
-	common.register(set)
-
-	set.Float64Var(&threshold, "compact-threshold", syncer.DefaultCompactThreshold,
+	flags := cmd.Flags()
+	flags.Float64Var(&settings.threshold, "compact-threshold", syncer.DefaultCompactThreshold,
 		"live fraction below which a pack is rewritten")
-	set.IntVar(&level, "level", manifest.DefaultLevel, "compression level for the fresh packs")
-	set.Var(bytesValue{&packInputMax}, "pack-input-max", "uncompressed input cap per pack")
-	set.Var(bytesValue{&bigFile}, "big-file-threshold", "files at least this large get their own pack")
-	set.Var(bytesValue{&sliceSize}, "slice-size", "cap on one uploaded object")
-	set.IntVar(&uploadJobs, "upload-jobs", 0, "objects uploaded at once")
-	set.StringVar(&tempDir, "tmpdir", "", "where to build packs before uploading them")
-	set.IntVar(&keepGenerations, "keep-generations", 0, "manifests to retain (default 1 after a compaction)")
-	set.DurationVar(&gcGrace, "gc-grace", 0, "leave unreferenced objects alone for this long")
-	set.BoolVar(&noLock, "no-lock", false, "do not take an advisory lease")
-	set.DurationVar(&leaseTTL, "lease-ttl", 0, "how long the lease is honoured")
-	set.BoolVar(&force, "force", false, "ignore a foreign lease")
+	flags.IntVar(&settings.level, "level", manifest.DefaultLevel, "compression level for the fresh packs")
+	flags.Var(bytesFlag{&settings.packInputMax}, "pack-input-max", "uncompressed input cap per pack")
+	flags.Var(bytesFlag{&settings.bigFileThreshold}, "big-file-threshold",
+		"files at least this large get their own pack")
+	flags.Var(bytesFlag{&settings.sliceSize}, "slice-size", "cap on one uploaded object")
+	flags.IntVar(&settings.uploadJobs, "upload-jobs", 0, "objects uploaded at once")
+	flags.StringVar(&settings.tempDir, "tmpdir", "", "where to build packs before uploading them")
+	flags.IntVar(&settings.keepGenerations, "keep-generations", 0,
+		"manifests to retain (default 1 after a compaction)")
+	flags.DurationVar(&settings.gcGrace, "gc-grace", 0, "leave unreferenced objects alone for this long")
+	flags.BoolVar(&noLock, "no-lock", false, "do not take an advisory lease")
+	flags.DurationVar(&settings.leaseTTL, "lease-ttl", 0, "how long the lease is honoured")
+	flags.BoolVar(&settings.force, "force", false, "ignore a foreign lease")
 
-	if err := set.Parse(args); err != nil {
-		return err
-	}
-
-	root, err := resolveRoot(set.Args())
-	if err != nil {
-		return err
-	}
-
-	session, err := common.open(env, set, true, root)
-	if err != nil {
-		return err
-	}
-
-	defer session.reporter.Close()
-
-	ctx, cancel := common.withTimeout(ctx)
-	defer cancel()
-
-	return runCompaction(ctx, session, compactSettings{
-		root:             root,
-		threshold:        threshold,
-		level:            level,
-		packInputMax:     packInputMax,
-		bigFileThreshold: bigFile,
-		sliceSize:        sliceSize,
-		jobs:             common.jobs,
-		uploadJobs:       uploadJobs,
-		tempDir:          tempDir,
-		keepGenerations:  keepGenerations,
-		gcGrace:          gcGrace,
-		lock:             !noLock,
-		leaseTTL:         leaseTTL,
-		force:            force,
-		dryRun:           common.dryRun,
-	})
+	return cmd
 }
 
-func gcCommand() *Command {
-	return &Command{
-		Name:  "gc",
-		Short: "Delete objects no retained manifest references (moves no data)",
-		Run:   runGC,
-	}
-}
-
-func runGC(ctx context.Context, env *Env, args []string) error {
+func newGCCommand(global *globalFlags) *cobra.Command {
 	var (
-		common          commonFlags
 		keepGenerations int
 		gcGrace         time.Duration
 	)
 
-	set := flag.NewFlagSet("gc", flag.ContinueOnError)
-	set.SetOutput(env.Stderr)
-	common.register(set)
+	cmd := &cobra.Command{
+		Use:   "gc",
+		Short: "Delete objects no retained manifest references (moves no data)",
+		Long: "Delete manifests beyond the retention count, and objects nothing retained still\n" +
+			"references.\n\n" +
+			"No data is rewritten, so this is cheap enough to run in CI. It works entirely from\n" +
+			"the container and needs no local tree.",
+		Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			session, err := global.open(cmd, true, "")
+			if err != nil {
+				return err
+			}
 
-	set.IntVar(&keepGenerations, "keep-generations", 0, "manifests to retain (default 5)")
-	set.DurationVar(&gcGrace, "gc-grace", 0, "leave unreferenced objects alone for this long (default 6h)")
+			defer session.reporter.Close()
 
-	if err := set.Parse(args); err != nil {
-		return err
+			ctx, cancel := global.withTimeout(cmd.Context())
+			defer cancel()
+
+			return runGC(ctx, session, global, keepGenerations, gcGrace)
+		},
 	}
 
-	if set.NArg() > 0 {
-		return Failf(CodeUsage, "gc takes no path argument; it works entirely from the container")
-	}
+	flags := cmd.Flags()
+	flags.IntVar(&keepGenerations, "keep-generations", 0, "manifests to retain (default 5)")
+	flags.DurationVar(&gcGrace, "gc-grace", 0,
+		"leave unreferenced objects alone for this long (default 6h)")
 
-	session, err := common.open(env, set, true, "")
-	if err != nil {
-		return err
-	}
+	return cmd
+}
 
-	defer session.reporter.Close()
-
-	ctx, cancel := common.withTimeout(ctx)
-	defer cancel()
-
-	plan, err := planGC(ctx, session, keepGenerations, gcGrace)
+func runGC(ctx context.Context, session *session, global *globalFlags, keepGenerations int, grace time.Duration) error {
+	plan, err := planGC(ctx, session, keepGenerations, grace)
 	if err != nil {
 		return err
 	}
@@ -223,7 +199,7 @@ func runGC(ctx context.Context, env *Env, args []string) error {
 		return nil
 	}
 
-	if common.dryRun {
+	if global.dryRun {
 		session.reporter.Phase("done", "dry run: nothing was deleted")
 
 		return nil
@@ -255,7 +231,8 @@ func planGC(ctx context.Context, session *session, keepGenerations int, grace ti
 	if fork, forked := manifest.DetectFork(state.Manifests); forked {
 		// The losing manifest may be the only thing keeping some packs alive.
 		return nil, Failf(CodeConflict,
-			"two manifests exist at generation %d; resolve that before collecting garbage", fork.Generation)
+			"two manifests exist at generation %d; resolve that before collecting garbage",
+			fork.Generation)
 	}
 
 	plan, err := syncer.PlanCollect(ctx, session.store, state, syncer.CollectOptions{

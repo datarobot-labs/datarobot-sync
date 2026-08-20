@@ -76,7 +76,24 @@ Run `task lint` after every change, before considering the work done.
   deduplicated (last wins).
 - `allFiles/` `limit` defaults to 100 and caps at 1000; always follow `next`. A `prefix` must
   end in `/`.
+- Presigned URLs come back with an explicit `:443`, and SigV4 signed the host *without* it.
+  `drapi.stripDefaultPort` removes it; without that every download is a
+  `SignatureDoesNotMatch`. No httptest-based test can catch this — they listen on non-default
+  ports — so it needs the live integration suite.
+- Catalog tags cannot contain a dash (undocumented 422). `syncer.ValidateTags` enforces it
+  before the container is created.
+- `dr` v0.2.86 does not scan the project-local `.dr/plugins/` its docs describe; use `PATH`.
 - We never set `useArchiveContents=True`: DataRobot's intake cannot unpack xz.
+
+## Structure
+
+- The command tree is cobra, in `internal/cli`. `--dr-plugin-manifest` is answered in `main`
+  before cobra parses anything, because cobra would reject an unknown flag in `argv[1]`.
+- cobra's parse, argument and unknown-command errors arrive without an exit code; they are
+  wrapped as usage errors so a typo never reports as an internal failure.
+- **viper is confined to `internal/config`**, enforced by a `depguard` rule. That package owns
+  the flag → environment → config-file precedence; reading viper from a command would
+  reintroduce the precedence bugs a single owner prevents.
 
 ## Style
 

@@ -157,12 +157,26 @@ tasks:
       - ./scripts/package-plugin.sh
 
   install:local:
-    desc: Build into .dr/plugins/ so `dr sync ...` picks up this working tree
+    desc: "Install dr-sync onto PATH so `dr sync ...` runs this working tree (INSTALL_DIR=~/.local/bin)"
     deps: [check:toolchain]
+    vars:
+      INSTALL_DIR: '{{.INSTALL_DIR | default "$HOME/.local/bin"}}'
     cmds:
-      - mkdir -p .dr/plugins
-      - go build -ldflags "{{.LDFLAGS}}" -o .dr/plugins/dr-sync ./cmd/dr-sync
-      - echo "✅ run 'dr plugin list' — 'sync' should appear from .dr/plugins/dr-sync"
+      # PATH, not .dr/plugins/. The plugin docs list a project-local .dr/plugins/ directory,
+      # but dr v0.2.86 does not scan it — verified by discovering the same binary from PATH and
+      # not from .dr/plugins/. PATH is also where the other dr-* plugins live.
+      - mkdir -p {{.INSTALL_DIR}}
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.INSTALL_DIR}}/dr-sync ./cmd/dr-sync
+      - |
+        echo "✅ installed {{.INSTALL_DIR}}/dr-sync"
+        echo "   ensure {{.INSTALL_DIR}} is on PATH, then: dr plugin list && dr sync --help"
+
+  uninstall:local:
+    desc: Remove the locally installed dr-sync
+    vars:
+      INSTALL_DIR: '{{.INSTALL_DIR | default "$HOME/.local/bin"}}'
+    cmds:
+      - rm -f {{.INSTALL_DIR}}/dr-sync
 
   release:snapshot:
     desc: Build a full release locally (all platforms + Docker), publish nothing

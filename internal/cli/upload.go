@@ -9,9 +9,10 @@ package cli
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/datarobot/golang-datarobot-filesync/internal/drapi"
 	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
@@ -32,12 +33,10 @@ func classify(err error) error {
 		return Fail(CodeConflict, err)
 	case syncer.IsStaleManifest(err), packer.IsIntegrityError(err):
 		return Fail(CodeIntegrity, err)
-	case errors.Is(err, syncer.ErrNoManifest):
+	case errors.Is(err, syncer.ErrNoManifest), errors.Is(err, syncer.ErrInvalidTag):
 		return Fail(CodeUsage, err)
 	case errors.Is(err, manifest.ErrUnsupportedVersion):
 		return Fail(CodeIntegrity, err)
-	case drapi.IsAuth(err):
-		return Fail(CodeAPI, err)
 	case drapi.StatusOf(err) != 0:
 		return Fail(CodeAPI, err)
 	default:
@@ -47,12 +46,9 @@ func classify(err error) error {
 
 // uploadFlags are the push-only options.
 type uploadFlags struct {
-	common commonFlags
-
 	delete           bool
 	followSymlinks   bool
 	level            int
-	packSize         int64
 	packInputMax     int64
 	bigFileThreshold int64
 	sliceSize        int64
@@ -72,63 +68,72 @@ type uploadFlags struct {
 	force            bool
 }
 
-func uploadCommand() *Command {
-	return &Command{
-		Name:  "upload",
-		Usage: "<path>",
-		Short: "Push a directory into a container, transferring only what changed",
-		Run:   runUpload,
-	}
+func (u *uploadFlags) register(cmd *cobra.Command) {
+	flags := cmd.Flags()
+
+	flags.BoolVar(&u.delete, "delete", false, "drop paths from the manifest that are no longer local")
+	flags.BoolVar(&u.followSymlinks, "follow-symlinks", false,
+		"store what links point at instead of the links")
+	flags.IntVar(&u.level, "level", manifest.DefaultLevel,
+		"compression level 0-9; 0 stores without compressing")
+	flags.Var(bytesFlag{&u.packInputMax}, "pack-input-max", "uncompressed input cap per pack")
+	flags.Var(bytesFlag{&u.bigFileThreshold}, "big-file-threshold",
+		"files at least this large get their own pack")
+	flags.Var(bytesFlag{&u.sliceSize}, "slice-size", "cap on one uploaded object")
+	flags.IntVar(&u.compressJobs, "compress-jobs", 0, "packs compressed at once (default: CPUs, capped at 4)")
+	flags.IntVar(&u.uploadJobs, "upload-jobs", 0, "objects uploaded at once (default 4)")
+	flags.StringVar(&u.tempDir, "tmpdir", "", "where to build packs before uploading them")
+	flags.IntVar(&u.maxStageFiles, "max-stage-files", 0, "objects per commit (default 500)")
+	flags.Var(bytesFlag{&u.maxStageBytes}, "max-stage-bytes", "bytes per commit (default 4GiB)")
+	flags.StringVar(&u.overwrite, "overwrite", string(drapi.OverwriteError),
+		"what to do if a name already exists: error or replace")
+	flags.IntVar(&u.keepGenerations, "keep-generations", 0, "manifests to retain (default 5)")
+	flags.DurationVar(&u.gcGrace, "gc-grace", 0,
+		"leave unreferenced objects alone for this long (default 6h)")
+	flags.BoolVar(&u.noGC, "no-gc", false, "do not delete unreferenced objects after committing")
+	flags.BoolVar(&u.compact, "compact", false, "rewrite sparse packs after pushing")
+	flags.Float64Var(&u.compactThreshold, "compact-threshold", syncer.DefaultCompactThreshold,
+		"live fraction below which a pack is worth rewriting")
+	flags.BoolVar(&u.noLock, "no-lock", false, "do not take an advisory lease")
+	flags.DurationVar(&u.leaseTTL, "lease-ttl", 0, "how long the lease is honoured (default 30m)")
+	flags.BoolVar(&u.force, "force", false, "ignore a foreign lease and a moved head")
 }
 
-func runUpload(ctx context.Context, env *Env, args []string) error {
-	var opts uploadFlags
+func newUploadCommand(global *globalFlags) *cobra.Command {
+	opts := &uploadFlags{}
 
-	set := flag.NewFlagSet("upload", flag.ContinueOnError)
-	set.SetOutput(env.Stderr)
-	opts.common.register(set)
-
-	set.BoolVar(&opts.delete, "delete", false, "drop paths from the manifest that are no longer local")
-	set.BoolVar(&opts.followSymlinks, "follow-symlinks", false, "store what links point at instead of the links")
-	set.IntVar(&opts.level, "level", manifest.DefaultLevel, "compression level 0-9; 0 stores without compressing")
-	set.Var(bytesValue{&opts.packSize}, "pack-size", "compressed size a pack aims for")
-	set.Var(bytesValue{&opts.packInputMax}, "pack-input-max", "uncompressed input cap per pack")
-	set.Var(bytesValue{&opts.bigFileThreshold}, "big-file-threshold", "files at least this large get their own pack")
-	set.Var(bytesValue{&opts.sliceSize}, "slice-size", "cap on one uploaded object")
-	set.IntVar(&opts.compressJobs, "compress-jobs", 0, "packs compressed at once (default: CPUs, capped at 4)")
-	set.IntVar(&opts.uploadJobs, "upload-jobs", 0, "objects uploaded at once (default 4)")
-	set.StringVar(&opts.tempDir, "tmpdir", "", "where to build packs before uploading them")
-	set.IntVar(&opts.maxStageFiles, "max-stage-files", 0, "objects per commit (default 500)")
-	set.Var(bytesValue{&opts.maxStageBytes}, "max-stage-bytes", "bytes per commit (default 4GiB)")
-	set.StringVar(&opts.overwrite, "overwrite", string(drapi.OverwriteError),
-		"what to do if a name already exists: error or replace")
-	set.IntVar(&opts.keepGenerations, "keep-generations", 0, "manifests to retain (default 5)")
-	set.DurationVar(&opts.gcGrace, "gc-grace", 0, "leave unreferenced objects alone for this long (default 6h)")
-	set.BoolVar(&opts.noGC, "no-gc", false, "do not delete unreferenced objects after committing")
-	set.BoolVar(&opts.compact, "compact", false, "rewrite sparse packs after pushing")
-	set.Float64Var(&opts.compactThreshold, "compact-threshold", syncer.DefaultCompactThreshold,
-		"live fraction below which a pack is worth rewriting")
-	set.BoolVar(&opts.noLock, "no-lock", false, "do not take an advisory lease")
-	set.DurationVar(&opts.leaseTTL, "lease-ttl", 0, "how long the lease is honoured (default 30m)")
-	set.BoolVar(&opts.force, "force", false, "ignore a foreign lease and a moved head")
-
-	if err := set.Parse(args); err != nil {
-		return err
+	cmd := &cobra.Command{
+		Use:   "upload <path>",
+		Short: "Push a directory into a container, transferring only what changed",
+		Long: "Push a directory into a container.\n\n" +
+			"Only content the container does not already hold is transferred, so a rename or a\n" +
+			"revert costs nothing. Without --delete the push is additive: paths that have gone\n" +
+			"from the local tree stay in the manifest.",
+		Args: exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runUpload(cmd, args, global, opts)
+		},
 	}
 
-	root, err := resolveRoot(set.Args())
+	opts.register(cmd)
+
+	return cmd
+}
+
+func runUpload(cmd *cobra.Command, args []string, global *globalFlags, opts *uploadFlags) error {
+	root, err := syncRoot(args)
 	if err != nil {
 		return err
 	}
 
-	session, err := opts.common.open(env, set, true, root)
+	session, err := global.open(cmd, true, root)
 	if err != nil {
 		return err
 	}
 
 	defer session.reporter.Close()
 
-	ctx, cancel := opts.common.withTimeout(ctx)
+	ctx, cancel := global.withTimeout(cmd.Context())
 	defer cancel()
 
 	overwrite, err := parseOverwrite(opts.overwrite)
@@ -146,7 +151,7 @@ func runUpload(ctx context.Context, env *Env, args []string) error {
 		PackInputMax:     opts.packInputMax,
 		BigFileThreshold: opts.bigFileThreshold,
 		SliceSize:        opts.sliceSize,
-		Jobs:             opts.common.jobs,
+		Jobs:             global.jobs,
 		CompressJobs:     opts.compressJobs,
 		UploadJobs:       opts.uploadJobs,
 		TempDir:          opts.tempDir,
@@ -160,7 +165,7 @@ func runUpload(ctx context.Context, env *Env, args []string) error {
 		Lock:             !opts.noLock,
 		LeaseTTL:         opts.leaseTTL,
 		Force:            opts.force,
-		DryRun:           opts.common.dryRun,
+		DryRun:           global.dryRun,
 	})
 	if err != nil {
 		return classify(err)
@@ -179,7 +184,7 @@ func runUpload(ctx context.Context, env *Env, args []string) error {
 		packInputMax:     opts.packInputMax,
 		bigFileThreshold: opts.bigFileThreshold,
 		sliceSize:        opts.sliceSize,
-		jobs:             opts.common.jobs,
+		jobs:             global.jobs,
 		uploadJobs:       opts.uploadJobs,
 		tempDir:          opts.tempDir,
 		maxStageFiles:    opts.maxStageFiles,
@@ -191,15 +196,17 @@ func runUpload(ctx context.Context, env *Env, args []string) error {
 	})
 }
 
+// parseOverwrite validates the strategy, rejecting the two the API offers but dr-sync must
+// never use.
 func parseOverwrite(value string) (drapi.OverwriteStrategy, error) {
 	switch drapi.OverwriteStrategy(value) {
 	case drapi.OverwriteError, drapi.OverwriteReplace:
 		return drapi.OverwriteStrategy(value), nil
 
 	case drapi.OverwriteRename, drapi.OverwriteSkip:
-		// The API offers these, but both would leave a pack under a name no manifest
-		// references: rename stores it as "p_x (1).tar.xz", skip silently keeps whatever was
-		// already there. Either way the manifest points at content that is not where it says.
+		// Both would leave a pack under a name no manifest references: rename stores it as
+		// "p_x (1).tar.xz", skip silently keeps whatever was already there. Either way the
+		// manifest points at content that is not where it says.
 		return "", Failf(CodeUsage,
 			"--overwrite=%s would store a pack under a name the manifest cannot find; want error or replace",
 			value)
@@ -241,4 +248,26 @@ func reportUpload(reporter *progress.Reporter, result *syncer.UploadResult) {
 	if result.CompactHint != "" {
 		reporter.Hint(result.CompactHint)
 	}
+}
+
+func newStatusCommand(global *globalFlags) *cobra.Command {
+	opts := &uploadFlags{}
+
+	cmd := &cobra.Command{
+		Use:   "status <path>",
+		Short: "Show what an upload would do, without writing anything",
+		Long: "Plan an upload and print it, writing nothing.\n\n" +
+			"This is `upload --dry-run` sharing the same code path, on purpose: a status that\n" +
+			"could disagree with the push it describes would be worse than no status at all.",
+		Args: exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			global.dryRun = true
+
+			return runUpload(cmd, args, global, opts)
+		},
+	}
+
+	opts.register(cmd)
+
+	return cmd
 }

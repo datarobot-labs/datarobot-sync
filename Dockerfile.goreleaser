@@ -1,0 +1,12 @@
+# Packages the binary GoReleaser already built; nothing is compiled here.
+#
+# A static base is possible because dr-sync's xz implementation is pure Go: there is no
+# system `xz` to depend on, and nothing to link against.
+FROM cgr.dev/chainguard/static:latest
+
+# dockers_v2 stages each platform's binary under $TARGETPLATFORM, unlike the legacy
+# `dockers:` block which copies from the build context root.
+ARG TARGETPLATFORM
+COPY $TARGETPLATFORM/dr-sync /dr-sync
+
+ENTRYPOINT ["/dr-sync"]

@@ -1,0 +1,104 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: dr-sync
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: dr-sync
+    main: ./cmd/dr-sync
+    binary: dr-sync
+    env:
+      - CGO_ENABLED=0
+    # Reproducible builds: without this the binary embeds the build time and two builds of
+    # the same commit differ.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/datarobot/golang-datarobot-filesync/internal/version.Version={{ .Version }}
+      - -X github.com/datarobot/golang-datarobot-filesync/internal/version.GitCommit={{ .FullCommit }}
+      - -X github.com/datarobot/golang-datarobot-filesync/internal/version.BuildDate={{ .CommitDate }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+      - riscv64
+    ignore:
+      # riscv64 is carried for the dr plugin archive, which ships a Linux riscv64 binary;
+      # macOS and Windows have no such target.
+      - goos: darwin
+        goarch: riscv64
+      - goos: windows
+        goarch: riscv64
+
+archives:
+  - id: dr-sync
+    ids: [dr-sync]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE.txt
+      - README.md
+      - SPEC.md
+
+checksum:
+  name_template: "checksums.txt"
+
+dockers_v2:
+  - id: dr-sync
+    ids: [dr-sync]
+    dockerfile: Dockerfile.goreleaser
+    images:
+      - ghcr.io/datarobot/dr-sync
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.description: "rsync for the DataRobot Files API"
+      org.opencontainers.image.url: "https://github.com/datarobot/golang-datarobot-filesync"
+      org.opencontainers.image.source: "https://github.com/datarobot/golang-datarobot-filesync"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .CommitDate }}"
+      org.opencontainers.image.licenses: "LicenseRef-DataRobot-Tool-And-Utility-Agreement"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  prerelease: auto
+  footer: |
+    ## Install as a `dr` plugin
+
+    ```sh
+    dr plugin install sync --url https://github.com/datarobot/golang-datarobot-filesync/releases/download/{{ .Tag }}/sync-{{ .Version }}.tar.xz
+    dr sync init
+    ```
+
+    ## Container image
+
+    ```sh
+    docker run --rm -v "$PWD:/data" \
+      -e DATAROBOT_ENDPOINT -e DATAROBOT_API_TOKEN -e DR_SYNC_CATALOG_ID \
+      ghcr.io/datarobot/dr-sync:{{ .Version }} upload /data
+    ```

@@ -95,12 +95,24 @@ Also established:
   clock.
 - Sending an `Authorization` header alongside a presigned S3 URL returns **400**. Confirmed,
   not theoretical — hence invariant 6.
+- **Presigned URLs carry an explicit `:443`**, and SigV4 signs the *canonical* host, which
+  omits the scheme's default port. Go sends the `Host` header exactly as the URL spells it,
+  so the port must be stripped before the request or S3 answers `SignatureDoesNotMatch`. curl
+  strips it silently, which is why the URL appears to work by hand and nowhere else. No
+  `httptest`-based test can catch this, because those always listen on a non-default port —
+  it took a run against the live service.
+- **Catalog tags cannot contain a dash.** `PATCH catalogItems/{id}/` answers
+  `422 Tag cannot contain \`-\`` — undocumented, and found by having a tag rejected. Tags are
+  validated before the container is created so the failure names the rule instead of leaving an
+  orphan behind.
 - `POST files/` returns `{catalogId, catalogVersionId}`; `POST files/{id}/stages/` returns
   `{catalogId, stageId}` and needs an empty body; `stages/{id}/upload/` returns `201`;
   `DELETE files/{id}/` returns `204` and later reads return `410 Gone` (soft delete).
 
 ### What these answers changed
 
+0. **Presigned URLs need their default port stripped.** Without it every download fails with a
+   signature mismatch, and no unit test can see it.
 1. **Skipping already-present packs is mandatory, not an optimization.** Because
    `overwrite=error` rejects the entire commit on any pre-existing name, a resumed run that
    re-uploads a pack it already landed would fail the whole push. The content-addressed name
@@ -374,10 +386,10 @@ problem plus the tags-clearing footgun). Any description we write is display-onl
 ## Implementation layout and CLI
 
 ```
-cmd/dr-sync/main.go          --dr-plugin-manifest fast path; dispatch; error → exit code
+cmd/dr-sync/main.go          --dr-plugin-manifest fast path, then cobra; error → exit code
 cmd/dr-sync/manifest.json    go:embed'd plugin manifest (name "sync", authentication true)
-internal/cli/                subcommand table, shared FlagSet builders, env precedence
-internal/config/             endpoint/token/catalog resolution (env → --config → drconfig.yaml)
+internal/cli/                cobra command tree, shared persistent flags, exit-code mapping
+internal/config/             endpoint/token/catalog resolution; the only package that uses viper
 internal/drapi/              client, retry, typed errors, allFiles iterator, links (no-auth
                              transport), stage create/upload/commit, catalog, async poll
 internal/manifest/           schema + Validate, xz codec, head selection & fork detect,
@@ -391,16 +403,25 @@ internal/progress/           Reporter interface; tty / json / quiet renderers
 internal/version/            ldflags-injected version, commit, date
 ```
 
-Four dependencies: `github.com/ulikunitz/xz v0.5.16`, `golang.org/x/sync/errgroup`,
-`golang.org/x/text/unicode/norm`, `golang.org/x/term`. Plus `gopkg.in/yaml.v3` for the two
-keys we need out of `drconfig.yaml` (or a 30-line hand reader — decide at implementation).
-Pin `ulikunitz/xz` exactly and check `WriterConfig` field names against the pinned version;
-that API has shifted across releases and it is the one moving target here.
+Direct dependencies: `github.com/spf13/cobra` and `github.com/spf13/viper` for the command
+tree and configuration, `github.com/ulikunitz/xz v0.5.16` for compression,
+`golang.org/x/sync/errgroup`, `golang.org/x/text/unicode/norm`, and `golang.org/x/term`. Pin
+`ulikunitz/xz` exactly and check `WriterConfig` field names against the pinned version; that
+API has shifted across releases and it is the one moving target here.
 
-**No cobra.** Seven flat subcommands, no completions requirement, and a real interest in a
-small binary shipped inside a plugin archive. `flag.NewFlagSet` per subcommand plus a short
-dispatcher gives everything except completions and `-abc` bundling, and it keeps the
-`--dr-plugin-manifest` pre-parse trivial (cobra fights an unknown flag as `argv[1]`).
+**cobra and viper**, matching the `dr` CLI. cobra permutes arguments, so `upload ./dir --delete`
+works the way anyone would type it — the stdlib `flag` package stops at the first positional and
+fails that invocation. It also contributes shell completions and grouped per-command help for
+free. Two things it needs care with: `--dr-plugin-manifest` is answered in `main` *before* cobra
+sees it, since cobra would reject an unknown flag in `argv[1]`; and cobra's own parse, argument
+and unknown-command failures arrive without an exit code, so they are wrapped as usage errors
+rather than being reported as internal ones.
+
+viper owns the flag → environment → config-file precedence, and lives behind `internal/config`
+only. A `depguard` rule enforces that: reading viper from a command would reintroduce exactly
+the precedence bugs a single owner exists to prevent. Because the flag names double as viper
+keys, `drconfig.yaml` can carry any of them — a `catalog-id:` key, say — with no per-command
+special case.
 
 ```
 dr-sync init                 [--name N] [--description D] [--tag T]...   → prints catalog id
@@ -408,9 +429,10 @@ dr-sync upload   <path>
 dr-sync download <path>
 dr-sync status   <path>      classify + plan, no writes (same as --dry-run, read-only)
 dr-sync ls                   [--prefix P] [--long] [--generation N]      manifest contents
-dr-sync inspect              [--packs] [--json]   generations, liveness, dead bytes, leases
+dr-sync inspect              [--packs]    generations, liveness, dead bytes, leases
 dr-sync compact  <path>      tier-2, local-tree-driven
 dr-sync gc                   tier-1 only
+dr-sync completion <shell>   contributed by cobra
 dr-sync version
 dr-sync --dr-plugin-manifest works with no env and no network
 ```
@@ -463,6 +485,10 @@ with goreleaser OSS v2 (2.15.4 locally supports it).
   `COPY $TARGETPLATFORM/dr-sync /dr-sync`, `ENTRYPOINT ["/dr-sync"]`. The `$TARGETPLATFORM`
   subdirectory is load-bearing — `dockers_v2` stages binaries there, unlike legacy `dockers:`.
   Pure-Go xz is what lets this be a scratch-style image with no `xz` binary.
+- Plugin discovery: the docs list a project-local `.dr/plugins/` directory, but **dr v0.2.86
+  does not scan it** — verified by discovering the same binary from `PATH` and not from
+  `.dr/plugins/`. `task install:local` therefore installs onto `PATH`, which is also where the
+  other `dr-*` plugins live.
 - Plugin archive via `task plugin:package`: stage `manifest.json`, `LICENSE.txt` (required by
   the packager), `dr-sync.sh` + `dr-sync.ps1` wrappers that `exec` the right
   `dr-sync-<goos>-<goarch>`, and those binaries, then
