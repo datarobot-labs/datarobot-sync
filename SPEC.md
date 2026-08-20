@@ -19,13 +19,14 @@ Neither drops into CI, and both re-send bytes that have not changed.
   There are no folder objects — directories are implied by `/` in the path.
 - `GET files/{id}/allFiles/` returns `fileName` (full relative path), `fileSize`, and
   **`fileChecksum` = SHA-256 hex of the raw bytes**. Confirmed by downloading a file and
-  hashing it: exact match. `prefix=` filtering works; `next` is an absolute URL to follow
-  verbatim.
+  hashing it: exact match. `prefix=` filtering works (the prefix must end in `/`); `limit`
+  defaults to 100 and caps at 1000, so following `next` — an absolute URL, used verbatim —
+  is mandatory.
 - Downloads are presigned S3 URLs. `POST files/{id}/links/` returns them in batch (validity
   up to 3000s) and they honour `Range` (verified `206`).
-- Uploads are multipart, one request per file, but a "stage"
-  (`stages/` → N× `stages/{id}/upload/` → `fromStage/`) batches many files behind **one**
-  async commit.
+- Uploads are multipart, one request per file, and each costs ~0.2 s even at 8-way
+  parallelism. A "stage" (`stages/` → N× `stages/{id}/upload/` → `fromStage/`) batches them
+  behind **one** commit, which is why packing rather than mirroring is the whole design.
 - **DataRobot's intake will not unpack xz** — only zip, tar, tar.gz/tgz, tar.bz2, gz, bz2.
   Server-side extraction is off the table, and we never set `useArchiveContents`.
 
@@ -54,30 +55,60 @@ These are load-bearing. Breaking one is a data-loss or corruption bug, not a sty
 - A pack is uploaded before any manifest referencing it, and deleted only after the last
   manifest referencing it is gone.
 - A manifest is deleted only after a newer one is verified to be the maximum.
-- One `fromStage` commit per run wherever possible; when split, the manifest commits last.
+- One `fromStage` commit per run wherever possible — it is the atomicity boundary; when
+  split, the manifest commits last.
 - Everything streams. No `io.ReadAll` and no `bytes.Buffer` on file content, ever.
 - The `Authorization` header never reaches a presigned S3 URL.
 
 ---
 
-## Open questions to verify against the live API
+## Verified API behaviour
 
-The design leans on behaviours the initial live probing did not cover. Four of them can force
-a layout change, so they are settled against a scratch container before the packer is
-written. Record the answers here as they land.
+Every behaviour the design depends on has been settled against a throwaway container
+(`POST files/` → probes → `DELETE files/{id}/`, 2026-08-20, `app.datarobot.com`). All seven
+open questions came back favourable; two of the answers changed the design and are called out
+below.
 
-| # | Question | Fallback |
+| # | Question | Answer |
 |---|---|---|
-| V1 | Can a staged upload's multipart filename contain a leading-dot directory (`.dr-sync/packs/p_x.tar.xz`), and round-trip through `allFiles/` unchanged? | default `--meta-prefix dr-sync/` |
-| V2 | Does `prefix=.dr-sync/manifests/` filter correctly (nested + dotted)? | list `prefix=.dr-sync/`, filter client-side |
-| V3 | Largest body `stages/{id}/upload/` accepts — probe 64 MiB / 256 MiB / 1 GiB | set `--slice-size` under the observed limit |
-| V4 | Does `DELETE allFiles/` with `{"paths":[".dr-sync/packs/p_x.tar.xz"]}` delete that one file, not the directory? | delete by directory prefix; one dir per pack |
-| V5 | Max files/bytes per stage, and how `fromStage` latency scales with file count | tune `--max-stage-files` / `--max-stage-bytes` |
-| V6 | Is `fileChecksum` populated for files *we* upload via a stage (not just ingested archives), and how soon? | verify packs only by full-blob read; lose the free pre-flight |
-| V7 | Same name twice in one stage — fails at upload or at `fromStage`? Does `overwrite=error` fail the whole commit? | forces `replace` and a different retry strategy |
+| V1 | Can a staged upload's multipart filename contain a leading-dot directory, and round-trip through `allFiles/`? | **Yes.** `.dr-sync/packs/p_x.tar.xz` stored and listed byte-identically. No `--meta-prefix` fallback needed. |
+| V2 | Does `prefix=.dr-sync/manifests/` filter correctly (nested + dotted)? | **Yes.** Nested dotted prefixes filter exactly. A prefix **must end in `/`** or the API answers `Prefix must end with a forward slash "/"`. |
+| V3 | Largest body `stages/{id}/upload/` accepts? | **≥ 256 MiB** (64 MiB and 256 MiB both `201`). The 64 MiB `--slice-size` default sits comfortably under it. Above 256 MiB untested. |
+| V4 | Does `DELETE allFiles/` delete one nested dotted file, not the directory? | **Yes.** `{"numFilesDeleted": 1}`, siblings under the same directory untouched. |
+| V5 | Max files per stage, and how `fromStage` latency scales? | 200 files in one stage committed in **0.355 s**. Latency is effectively constant in file count. |
+| V6 | Is `fileChecksum` populated for files *we* upload via a stage, and how soon? | **Yes, immediately** on commit, and it equals SHA-256 of the raw bytes exactly. The free pre-flight integrity check is available. |
+| V7 | Same name twice in one stage? Does `overwrite=error` fail the whole commit? | Duplicate *within* a stage: accepted, deduplicated, last wins. Duplicate against a name **already in the container**: `409 Duplicate file name(s): <name>` and **nothing from that stage lands**. |
 
-Also measure whether `allFiles/` caps `limit` at 1000, and whether `fileCreatedAt` is server
-time (needed for clock-skew-proof GC grace).
+Also established:
+
+- **`fromStage` is synchronous.** It answers `200` with
+  `{catalogId, catalogVersionId, numFiles}` and **no `Location` header** — for a 1-file stage
+  and for a 200-file stage alike. Async `Location` polling is therefore a defensive fallback
+  for large stages, not the main path, and the async design must not assume it fires.
+- **`fromStage` is atomic.** On the `409` above, none of the stage's files landed, including
+  the ones with no conflict. Partial application is not a case to handle.
+- Per-file upload round-trips cost ~0.2 s each at 8-way parallelism (200 files in 43 s). This
+  is the whole case for packing: 200 files in one pack is one request, not 200.
+- `allFiles/` `limit` **caps at 1000** (higher → `value is greater than 1000`); the default is
+  100, so pagination is mandatory, not optional.
+- `fileCreatedAt` is server-side UTC, so it is safe to base GC grace on rather than a local
+  clock.
+- Sending an `Authorization` header alongside a presigned S3 URL returns **400**. Confirmed,
+  not theoretical — hence invariant 6.
+- `POST files/` returns `{catalogId, catalogVersionId}`; `POST files/{id}/stages/` returns
+  `{catalogId, stageId}` and needs an empty body; `stages/{id}/upload/` returns `201`;
+  `DELETE files/{id}/` returns `204` and later reads return `410 Gone` (soft delete).
+
+### What these answers changed
+
+1. **Skipping already-present packs is mandatory, not an optimization.** Because
+   `overwrite=error` rejects the entire commit on any pre-existing name, a resumed run that
+   re-uploads a pack it already landed would fail the whole push. The content-addressed name
+   plus the `.dr-sync/` listing is what makes the retry correct, not merely cheap.
+2. **The async poller is a fallback, not the hot path.** `fromStage` returns synchronously,
+   so the "one commit per run" invariant is about *atomicity*, not about amortizing a 5 s
+   poll. Keep the poller for the case where a large stage does return a `Location`, but do
+   not build the flow around it.
 
 ---
 
@@ -204,8 +235,11 @@ immediately valid rather than a special case everywhere. Prints the id and the
 7. **Build** with `min(GOMAXPROCS,4)` workers: `tar → xz.Writer → sliceWriter → sha256 tee`
    into `--tmpdir`, re-verifying each source SHA as it streams (a file changing under us is
    requeued once, then reported). Name the pack after the fact from its own digest. If that
-   name already appears in the step-2 listing with matching size and `fileChecksum`, skip the
-   upload entirely — that is crash-resume, for free, with no local state.
+   name already appears in the step-2 listing, **skip the upload** — and note this is
+   *required*, not an optimization: `overwrite=error` rejects the entire commit on any
+   pre-existing name, so a resumed run that re-uploaded a pack it already landed would fail
+   the whole push. Compare `fileChecksum` too; a name present with a different digest is a
+   corrupted prior upload and is reported, not silently reused.
    Slicing at `--slice-size` (64 MiB) is what removes the file-size ceiling: the API has no
    chunked upload, so a 40 GiB file becomes ~600 sibling objects reassembled by
    `io.MultiReader` on read. Cap scratch at `--max-scratch` (4 GiB) with backpressure.
@@ -217,11 +251,14 @@ immediately valid rather than a special case everywhere. Prints the id and the
 9. **Commit.** One stage: create, upload every not-already-present slice (4 at a time), then
    the manifest, then `fromStage` with `overwrite: "error"` — every name written is unique by
    construction, so a duplicate means a bug or a concurrent writer and we want to hear about
-   it. Poll `Location` with redirects disabled: 307 → follow, 303 → done, 200 → read
-   `status` (`error`/`abort` prefix → fail and surface `message`; `completed` → done;
-   anything unrecognized → hard error, never loop). Poll schedule 250 ms ×1.6 backoff capped
-   at 2 s, deadline 600 s. On deadline do **not** re-commit — exit 6 printing the status URL
-   and let a re-run reconcile from the listing.
+   it. `fromStage` normally answers `200` synchronously with
+   `{catalogId, catalogVersionId, numFiles}` (0.355 s for a 200-file stage), and it is
+   **atomic**: on a `409` nothing from the stage lands, so there is no partial-application
+   case. If it ever answers with a `Location` instead, fall back to polling with redirects
+   disabled: 307 → follow, 303 → done, 200 → read `status` (`error`/`abort` prefix → fail and
+   surface `message`; `completed` → done; anything unrecognized → hard error, never loop),
+   on a 250 ms ×1.6 backoff capped at 2 s with a 600 s deadline. On deadline do **not**
+   re-commit — exit 6 printing the status URL and let a re-run reconcile from the listing.
    Above `--max-stage-bytes` (4 GiB) or `--max-stage-files` (500), split: pack stages commit
    first, manifest last and alone. Immediately before the manifest commit, re-list manifests,
    re-read `catalogVersionId`, and re-verify every pack the manifest references still exists;

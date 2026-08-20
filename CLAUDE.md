@@ -66,8 +66,16 @@ Run `task lint` after every change, before considering the work done.
 - `POST files/{id}/downloads/` returns **303** to a presigned URL; `POST files/{id}/links/`
   returns them in batch and fails the whole batch if any single name is missing.
 - `PATCH catalogItems/{id}/` **clears `tags`** if you omit the field. Always send it.
-- Async write ops return a `Location` status URL: poll with redirects disabled, 307 → follow,
-  303 → done, 200 → read `status`.
+- `fromStage` is **synchronous and atomic**: `200` with `{catalogId, catalogVersionId,
+  numFiles}`, no `Location`, ~0.35 s even for 200 files; on a `409` nothing from the stage
+  lands. The `Location` poller (307 → follow, 303 → done, 200 → read `status`) is a fallback
+  for large stages, not the hot path.
+- `overwrite: "error"` rejects the **whole** commit if any name already exists in the
+  container, so skipping already-present content-addressed packs is required for a resumed
+  run to succeed — not just an optimization. Duplicate names *within* one stage are silently
+  deduplicated (last wins).
+- `allFiles/` `limit` defaults to 100 and caps at 1000; always follow `next`. A `prefix` must
+  end in `/`.
 - We never set `useArchiveContents=True`: DataRobot's intake cannot unpack xz.
 
 ## Style
