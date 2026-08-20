@@ -57,7 +57,9 @@ func NewRoot() *cobra.Command {
 		return Fail(CodeUsage, err)
 	})
 
-	root.SetVersionTemplate("{{.Name}} {{.Version}}\n")
+	// Not "{{.Name}}": cobra takes only the first word of Use, which under the dr CLI would
+	// print "dr" rather than "dr sync".
+	root.SetVersionTemplate(programName() + " {{.Version}}\n")
 
 	root.AddCommand(
 		newInitCommand(global),

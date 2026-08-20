@@ -171,6 +171,17 @@ func TestVersionCommand(t *testing.T) {
 	assert.Contains(t, out, "go1.")
 }
 
+// Cobra's {{.Name}} is only the first word of Use, which under the dr CLI would print "dr".
+func TestVersionFlagPrintsTheFullProgramName(t *testing.T) {
+	isolate(t)
+	t.Setenv(config.EnvPluginMode, "1")
+
+	code, out, _ := run(t, "--version")
+
+	require.Equal(t, CodeOK, code)
+	assert.Contains(t, out, "dr sync ")
+}
+
 func TestCompletionIsAvailable(t *testing.T) {
 	isolate(t)
 
