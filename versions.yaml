@@ -1,0 +1,15 @@
+---
+# External tools this plugin needs. The `dr` CLI checks these after installing the plugin
+# and before each invocation, and offers to install anything missing.
+#
+# dr-sync is a static binary that talks HTTP and does its own xz — it needs nothing but a
+# recent CLI to hand it credentials.
+dr:
+  name: DataRobot CLI
+  minimum-version: 0.2.74
+  command: dr self version
+  url: https://github.com/datarobot-oss/cli
+  install:
+    macos: curl -fsSL https://cli.datarobot.com/install.sh | sh
+    linux: curl -fsSL https://cli.datarobot.com/install.sh | sh
+    windows: powershell -c "irm https://cli.datarobot.com/install.ps1 | iex"

@@ -1,0 +1,11 @@
+{
+  "name": "sync",
+  "version": "0.1.0",
+  "description": "rsync for the DataRobot Files API: diff, compress, and ship a directory",
+  "authentication": true,
+  "minCLIVersion": "0.2.74",
+  "scripts": {
+    "posix": "dr-sync.sh",
+    "windows": "dr-sync.ps1"
+  }
+}

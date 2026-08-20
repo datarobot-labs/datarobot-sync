@@ -1,0 +1,77 @@
+version: "2"
+run:
+  go: 1.26.5
+  # Analyze the build-tagged test tiers (tests/integration, tests/e2e) too, so
+  # `golangci-lint run ./...` in CI lints them rather than skipping them.
+  build-tags:
+    - integration
+    - e2e
+linters:
+  enable:
+    - asasalint
+    # - forbidigo # disabled until we can resolve lints
+    - bodyclose
+    - contextcheck
+    - cyclop
+    - depguard
+    - dupword
+    - errname
+    - errorlint
+    - exhaustive
+    - godot
+    # - godox # disabled until we can resolve lints
+    - gosec
+    - loggercheck
+    - misspell
+    - nestif
+    - nolintlint
+    - perfsprint
+    - prealloc
+    - predeclared
+    - revive
+    - testifylint
+    - unconvert
+    - usestdlibvars
+    # - wrapcheck # disabled until we can resolve lints
+    - wsl_v5
+  settings:
+    depguard:
+      rules:
+        main:
+          list-mode: lax
+          allow:
+            - ://github.com
+    errcheck:
+      check-blank: true
+    staticcheck:
+      checks: [ "all", "-ST1005"]
+    govet:
+      enable:
+        - nilness
+        - reflectvaluecompare
+        - sortslice
+        - unusedwrite
+        - defers
+        - atomic
+        - nilfunc
+        - printf
+        - sortslice
+        - tests
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofumpt
+  exclusions:
+    generated: lax
+    paths:
+      - tmp$

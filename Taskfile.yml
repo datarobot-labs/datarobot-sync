@@ -1,0 +1,175 @@
+version: '3'
+
+vars:
+  BIN_DIR: "$PWD/tmp/bin"
+  GOLANGCI_LINT_VERSION: "v2.12.2"
+  GORELEASER_VERSION: "v2.15.4"
+  # Keep in sync with the GOOS list in .goreleaser.yaml.
+  LINT_GOOS_TARGETS: "linux darwin windows"
+  # Every platform the dr plugin archive ships. Keep in sync with dr-sync.sh.
+  PLUGIN_PLATFORMS: >-
+    linux/amd64 linux/arm64 linux/riscv64 darwin/amd64 darwin/arm64
+    windows/amd64 windows/arm64
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo unknown
+  BUILD_DATE:
+    sh: date -u +%Y-%m-%dT%H:%M:%SZ
+  LDFLAGS: >-
+    -s -w
+    -X github.com/datarobot/golang-datarobot-filesync/internal/version.Version={{.VERSION}}
+    -X github.com/datarobot/golang-datarobot-filesync/internal/version.GitCommit={{.COMMIT}}
+    -X github.com/datarobot/golang-datarobot-filesync/internal/version.BuildDate={{.BUILD_DATE}}
+
+tasks:
+  default:
+    cmds: [task: help]
+
+  help:
+    desc: "🛠️  Dev commands"
+    silent: true
+    cmds:
+      - task --list
+
+  check:toolchain:
+    desc: Fail early with a clear message if GOROOT points somewhere Go cannot use
+    internal: true
+    silent: true
+    cmds:
+      - |
+        if ! go env GOROOT >/dev/null 2>&1 || [ ! -d "$(go env GOROOT)/src/runtime" ]; then
+          echo "✗ GOROOT is set to '$(go env GOROOT)', which is not a Go installation." >&2
+          echo "  Unset it in your shell profile (asdf/homebrew Go do not need it):" >&2
+          echo "      unset GOROOT" >&2
+          exit 1
+        fi
+
+  install-tools:
+    desc: Install pinned static checkers into tmp/bin
+    run: once
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - |
+        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+          | sh -s -- -b {{.BIN_DIR}} {{.GOLANGCI_LINT_VERSION}}
+    status:
+      - test -x {{.BIN_DIR}}/golangci-lint
+      - '{{.BIN_DIR}}/golangci-lint --version | grep -q "{{trimPrefix "v" .GOLANGCI_LINT_VERSION}}"'
+
+  lint:
+    desc: Check for lint issues (does not modify files)
+    silent: true
+    deps: [check:toolchain, install-tools]
+    cmds:
+      - echo "🧹 Checking go.mod…"
+      - go mod tidy -diff
+      - echo "🧹 Checking formatting…"
+      - "{{.BIN_DIR}}/golangci-lint fmt --diff"
+      - echo "🧹 Vetting…"
+      - go vet ./...
+      - task: lint-goos
+      - task: lint:plugin-manifest
+      - task: lint:goreleaser
+
+  delint:
+    desc: Fix what can be fixed automatically, then lint
+    silent: true
+    deps: [check:toolchain, install-tools]
+    cmds:
+      - go mod tidy
+      - "{{.BIN_DIR}}/golangci-lint fmt"
+      - task: lint-goos
+        vars: { LINT_ARGS: "--fix" }
+
+  lint-goos:
+    # Run the linter once per target GOOS so build-constrained files (*_windows.go,
+    # //go:build linux) are checked no matter which OS the linter runs on.
+    internal: true
+    silent: true
+    deps: [install-tools]
+    cmds:
+      - for: { var: LINT_GOOS_TARGETS, split: " " }
+        cmd: |
+          echo "🧹 Linting (GOOS={{.ITEM}})…"
+          GOOS={{.ITEM}} {{.BIN_DIR}}/golangci-lint run {{.LINT_ARGS}} ./...
+
+  lint:plugin-manifest:
+    desc: Assert the embedded plugin manifest matches what the binary prints and the git tag
+    silent: true
+    cmds:
+      - echo "🧹 Checking plugin manifest…"
+      - ./scripts/check-plugin-manifest.sh
+
+  lint:goreleaser:
+    desc: Validate .goreleaser.yaml
+    silent: true
+    cmds:
+      - |
+        if [ ! -f .goreleaser.yaml ]; then exit 0; fi
+        if ! command -v goreleaser >/dev/null 2>&1; then
+          echo "⚠️  goreleaser not on PATH, skipping config check" >&2
+          exit 0
+        fi
+        echo "🧹 Checking GoReleaser config…"
+        goreleaser check
+
+  test:
+    desc: Run the unit tests
+    deps: [check:toolchain]
+    cmds:
+      - go test -count=1 -race -shuffle=on -coverprofile=coverage.out ./...
+
+  test:integration:
+    desc: "Run integration tests against a real DataRobot instance (needs DATAROBOT_API_TOKEN)"
+    deps: [check:toolchain]
+    cmds:
+      - go test -count=1 -tags=integration -timeout=30m ./tests/integration/...
+
+  build:
+    desc: Build dr-sync for this platform into dist/
+    deps: [check:toolchain]
+    cmds:
+      - mkdir -p dist
+      - go build -ldflags "{{.LDFLAGS}}" -o dist/dr-sync ./cmd/dr-sync
+
+  build:dist:
+    desc: Cross-compile dr-sync for every platform the plugin archive ships
+    deps: [check:toolchain]
+    cmds:
+      - mkdir -p dist
+      - for: { var: PLUGIN_PLATFORMS, split: " " }
+        cmd: |
+          set -e
+          goos=$(echo "{{.ITEM}}" | cut -d/ -f1)
+          goarch=$(echo "{{.ITEM}}" | cut -d/ -f2)
+          ext=""
+          [ "$goos" = "windows" ] && ext=".exe"
+          echo "🔨 $goos/$goarch"
+          CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+            go build -trimpath -ldflags "{{.LDFLAGS}}" \
+            -o "dist/dr-sync-$goos-$goarch$ext" ./cmd/dr-sync
+
+  plugin:package:
+    desc: Package all platform binaries into dist/sync-<version>.tar.xz via `dr self plugin package`
+    deps: [build:dist]
+    cmds:
+      - ./scripts/package-plugin.sh
+
+  install:local:
+    desc: Build into .dr/plugins/ so `dr sync ...` picks up this working tree
+    deps: [check:toolchain]
+    cmds:
+      - mkdir -p .dr/plugins
+      - go build -ldflags "{{.LDFLAGS}}" -o .dr/plugins/dr-sync ./cmd/dr-sync
+      - echo "✅ run 'dr plugin list' — 'sync' should appear from .dr/plugins/dr-sync"
+
+  release:snapshot:
+    desc: Build a full release locally (all platforms + Docker), publish nothing
+    cmds:
+      - goreleaser release --snapshot --clean
+
+  clean:
+    desc: Remove build output and tool cache
+    cmds:
+      - rm -rf dist tmp coverage.out
