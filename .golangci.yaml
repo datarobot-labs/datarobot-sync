@@ -68,6 +68,14 @@ linters:
       - third_party$
       - builtin$
       - examples$
+    rules:
+      # Test scaffolding earns different rules than production code. A fake HTTP router is a
+      # wide switch by nature and splitting it would obscure what it stands in for, and a
+      # fixture walking its own t.TempDir() is not a symlink-traversal risk.
+      - path: _test\.go
+        linters:
+          - cyclop
+          - gosec
 formatters:
   enable:
     - gofumpt

@@ -95,10 +95,22 @@ func PlanCollect(ctx context.Context, store *Store, state *State, opts CollectOp
 	plan := &CollectPlan{Retained: retained}
 
 	for _, ref := range prunable {
+		// The grace window applies to manifests as well as packs. A reader that has just
+		// selected a manifest and started fetching from it should not have it deleted out
+		// from under them, and a manifest costs about a megabyte to keep.
+		if entry, ok := state.Objects[ref.ObjectName]; ok && entry.CreatedAt != nil &&
+			now.Sub(*entry.CreatedAt) < grace {
+			plan.Retained = append(plan.Retained, ref)
+
+			continue
+		}
+
 		plan.Manifests = append(plan.Manifests, ref.ObjectName)
 	}
 
-	referenced, err := referencedObjects(ctx, store, retained)
+	// Anything still standing pins the packs it references, whether it was retained by count
+	// or reprieved by the grace window.
+	referenced, err := referencedObjects(ctx, store, plan.Retained)
 	if err != nil {
 		return nil, err
 	}

@@ -88,17 +88,19 @@ func parseLeaseObjectName(metaPrefix, objectName string) (clientID string, seque
 
 	stem := strings.TrimSuffix(strings.TrimPrefix(objectName, prefix), ".lock")
 
-	base, digits, found := strings.Cut(stem, "-")
-	if !found || base == "" {
+	// Split on the last dash, not the first: the sequence number is the suffix, and a client
+	// id is allowed to contain dashes.
+	dash := strings.LastIndex(stem, "-")
+	if dash <= 0 || dash == len(stem)-1 {
 		return "", 0, false
 	}
 
-	parsed, err := strconv.Atoi(digits)
+	parsed, err := strconv.Atoi(stem[dash+1:])
 	if err != nil {
 		return "", 0, false
 	}
 
-	return base, parsed, true
+	return stem[:dash], parsed, true
 }
 
 // loadLease reads one lease object.
