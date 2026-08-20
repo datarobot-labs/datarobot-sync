@@ -33,15 +33,27 @@ tasks:
       - task --list
 
   check:toolchain:
-    desc: Fail early with a clear message if GOROOT points somewhere Go cannot use
+    desc: Fail early with a clear message when the Go toolchain is not usable
     internal: true
     silent: true
     cmds:
+      # Without this, both failures below surface as "package fmt is not in std", which says
+      # nothing about the actual cause.
       - |
-        if ! go env GOROOT >/dev/null 2>&1 || [ ! -d "$(go env GOROOT)/src/runtime" ]; then
-          echo "✗ GOROOT is set to '$(go env GOROOT)', which is not a Go installation." >&2
-          echo "  Unset it in your shell profile (asdf/homebrew Go do not need it):" >&2
-          echo "      unset GOROOT" >&2
+        if ! command -v go >/dev/null 2>&1; then
+          echo "✗ no 'go' on PATH." >&2
+          echo "  With asdf, a version in .tool-versions does not create the shim by itself:" >&2
+          echo "      asdf install golang \$(awk '/^golang/{print \$2}' .tool-versions) && asdf reshim" >&2
+          exit 1
+        fi
+
+        if [ ! -d "$(go env GOROOT)/src/runtime" ]; then
+          echo "✗ GOROOT is '$(go env GOROOT)', which is not a Go installation." >&2
+          echo "  asdf's golang plugin exports GOROOT from a zsh precmd hook, so it is only" >&2
+          echo "  correct in an interactive shell. A non-interactive one inherits a stale value." >&2
+          echo "  Nothing to fix in your dotfiles — either run this from an interactive shell," >&2
+          echo "  or drop the inherited value for the command:" >&2
+          echo "      env -u GOROOT task lint" >&2
           exit 1
         fi
 
