@@ -174,9 +174,8 @@ tasks:
     vars:
       INSTALL_DIR: '{{.INSTALL_DIR | default "$HOME/.local/bin"}}'
     cmds:
-      # PATH, not .dr/plugins/. The plugin docs list a project-local .dr/plugins/ directory,
-      # but dr v0.2.86 does not scan it — verified by discovering the same binary from PATH and
-      # not from .dr/plugins/. PATH is also where the other dr-* plugins live.
+      # PATH is where dr discovers a dr-* executable, and where the other dr-* plugins live.
+      # The packaged form goes to ~/.config/datarobot/plugins/ instead; see plugin:package.
       - mkdir -p {{.INSTALL_DIR}}
       - go build -ldflags "{{.LDFLAGS}}" -o {{.INSTALL_DIR}}/dr-sync ./cmd/dr-sync
       - |

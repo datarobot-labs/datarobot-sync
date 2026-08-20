@@ -485,13 +485,10 @@ with goreleaser OSS v2 (2.15.4 locally supports it).
   `COPY $TARGETPLATFORM/dr-sync /dr-sync`, `ENTRYPOINT ["/dr-sync"]`. The `$TARGETPLATFORM`
   subdirectory is load-bearing — `dockers_v2` stages binaries there, unlike legacy `dockers:`.
   Pure-Go xz is what lets this be a scratch-style image with no `xz` binary.
-- Plugin discovery: two of the three documented locations work. A `dr-`-prefixed binary on
-  `PATH` is discovered, and so is a managed install under
-  `$XDG_CONFIG_HOME/datarobot/plugins/<name>/` (what `dr plugin install` writes). The
-  project-local `.dr/plugins/` directory the docs also list is **not scanned by dr v0.2.86** —
-  verified by discovering the same binary from `PATH` and not from `.dr/plugins/`.
-  `task install:local` therefore installs onto `PATH`, which is where the other `dr-*` plugins
-  live; `task plugin:package` produces the archive for the managed form.
+- Plugin discovery, both forms verified against dr v0.2.86: a `dr-`-prefixed executable on
+  `PATH`, which is what `task install:local` produces and where the other `dr-*` plugins live;
+  and a managed install under `$XDG_CONFIG_HOME/datarobot/plugins/<name>/`, which is what
+  `dr plugin install` writes from the archive `task plugin:package` builds.
 - Cobra derives `Name()` from the first word of `Use`, and every usage line is built from
   `CommandPath()`, which is built from `Name()`. A two-word invocation like `dr sync` therefore
   cannot go in `Use`: it goes in `cobra.CommandDisplayNameAnnotation`, which `UseLine`
@@ -511,8 +508,7 @@ with goreleaser OSS v2 (2.15.4 locally supports it).
 - `Taskfile.yml`: `lint` (`go mod tidy -diff`, `golangci-lint fmt --diff`, `go vet`,
   `golangci-lint run` once per GOOS so build-tagged files are covered, `goreleaser check`,
   manifest-version check), `test`, `build`, `build:dist`, `plugin:package`, `install:local`
-  (build straight into `.dr/plugins/dr-sync` for the dev loop), `release:snapshot`. Pin
-  tool versions in `vars:`.
+  (install onto `PATH` for the dev loop), `release:snapshot`. Pin tool versions in `vars:`.
 - `.golangci.yaml`: copy `/Users/carson.gee/code/opencode-cli-plugin/.golangci.yaml` (v2
   schema, gofumpt formatter) and re-enable `gosec` — this tool writes files from remote
   input, so the path-traversal and permission checks earn their keep here.

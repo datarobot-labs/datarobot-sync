@@ -36,8 +36,7 @@ dr sync --help
 
 That installs under `$XDG_CONFIG_HOME/datarobot/plugins/sync/`. For development, a
 `dr-`-prefixed binary anywhere on `PATH` is discovered just as well — which is what
-`task install:local` does. (`dr` does not scan the project-local `.dr/plugins/` its docs
-mention.)
+`task install:local` does.
 
 As a standalone binary — download the archive for your platform from
 [releases](https://github.com/datarobot/golang-datarobot-filesync/releases), or build it:

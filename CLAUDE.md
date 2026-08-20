@@ -60,7 +60,7 @@ task lint            # go mod tidy -diff, gofumpt check, go vet, golangci-lint p
                      # goreleaser check, plugin manifest version check
 task test            # go test -race -shuffle=on ./...
 task build           # build ./dist/dr-sync for this platform
-task install:local   # build into .dr/plugins/dr-sync so `dr sync ...` picks it up
+task install:local   # install dr-sync onto PATH so `dr sync ...` runs this tree
 task plugin:package  # build all platforms and produce the dr plugin .tar.xz
 task release:snapshot
 ```
@@ -94,10 +94,10 @@ Run `task lint` after every change, before considering the work done.
   ports — so it needs the live integration suite.
 - Catalog tags cannot contain a dash (undocumented 422). `syncer.ValidateTags` enforces it
   before the container is created.
-- `dr` v0.2.86 does not scan the project-local `.dr/plugins/` its docs describe. Use a
-  `dr-`-prefixed binary on `PATH` (`task install:local`) for development, or a managed install
-  under `~/.config/datarobot/plugins/sync/` (`task plugin:package` then
-  `dr plugin install sync --file dist/sync-<version>.tar.xz`). Both are verified working.
+- The plugin is discovered two ways, both verified: a `dr-`-prefixed executable on `PATH`
+  (`task install:local`) for development, and a managed install under
+  `~/.config/datarobot/plugins/sync/` (`task plugin:package`, then
+  `dr plugin install sync --file dist/sync-<version>.tar.xz`).
 - We never set `useArchiveContents=True`: DataRobot's intake cannot unpack xz.
 
 ## Structure

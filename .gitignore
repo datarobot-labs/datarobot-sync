@@ -2,9 +2,6 @@
 /dist/
 /tmp/
 
-# Local plugin install target for the `dr` dev loop
-/.dr/
-
 # Scratch left behind by an interrupted sync
 .dr-sync-tmp/
 
