@@ -41,6 +41,18 @@ These are load-bearing. Breaking one is a data-loss or corruption bug, not a sty
 8. Extraction never writes outside the sync root, never writes under the meta prefix, and
    strips setuid/setgid/sticky unless explicitly asked not to.
 
+## Toolchain
+
+Go is pinned in `.tool-versions` and managed with asdf. **After changing that file, run
+`asdf reshim`** — a version in `.tool-versions` does not create the shim on its own, and
+without it `go` fails with asdf's "No version is set for command go".
+
+If a build fails with `package fmt is not in std (/some/wrong/path/src/fmt)`, the shell has a
+stale `GOROOT`. asdf's golang plugin exports it from a zsh `precmd` hook, so it is only correct
+in an interactive shell; a non-interactive one inherits whatever the parent had. Nothing to fix
+in the dotfiles — run `env -u GOROOT task …` for that command. `task lint` detects both cases
+and says which one it is.
+
 ## Commands
 
 ```sh
@@ -82,7 +94,10 @@ Run `task lint` after every change, before considering the work done.
   ports — so it needs the live integration suite.
 - Catalog tags cannot contain a dash (undocumented 422). `syncer.ValidateTags` enforces it
   before the container is created.
-- `dr` v0.2.86 does not scan the project-local `.dr/plugins/` its docs describe; use `PATH`.
+- `dr` v0.2.86 does not scan the project-local `.dr/plugins/` its docs describe. Use a
+  `dr-`-prefixed binary on `PATH` (`task install:local`) for development, or a managed install
+  under `~/.config/datarobot/plugins/sync/` (`task plugin:package` then
+  `dr plugin install sync --file dist/sync-<version>.tar.xz`). Both are verified working.
 - We never set `useArchiveContents=True`: DataRobot's intake cannot unpack xz.
 
 ## Structure

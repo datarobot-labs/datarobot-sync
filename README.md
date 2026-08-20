@@ -26,12 +26,18 @@ dr-sync download ./my-project         # pull, fetching only what is missing
 
 ## Install
 
-As a `dr` plugin, from a release:
+As a `dr` plugin, from a release or a local archive:
 
 ```sh
 dr plugin install sync --url https://github.com/datarobot/golang-datarobot-filesync/releases/latest/download/sync-<version>.tar.xz
+dr plugin install sync --file dist/sync-<version>.tar.xz    # from `task plugin:package`
 dr sync --help
 ```
+
+That installs under `$XDG_CONFIG_HOME/datarobot/plugins/sync/`. For development, a
+`dr-`-prefixed binary anywhere on `PATH` is discovered just as well — which is what
+`task install:local` does. (`dr` does not scan the project-local `.dr/plugins/` its docs
+mention.)
 
 As a standalone binary — download the archive for your platform from
 [releases](https://github.com/datarobot/golang-datarobot-filesync/releases), or build it:
@@ -39,6 +45,9 @@ As a standalone binary — download the archive for your platform from
 ```sh
 task install:local     # builds into ~/.local/bin/dr-sync
 ```
+
+Building from source needs Go as pinned in `.tool-versions`; with asdf, run `asdf reshim` after
+first checkout so the `go` shim exists.
 
 As a container:
 

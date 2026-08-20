@@ -485,10 +485,17 @@ with goreleaser OSS v2 (2.15.4 locally supports it).
   `COPY $TARGETPLATFORM/dr-sync /dr-sync`, `ENTRYPOINT ["/dr-sync"]`. The `$TARGETPLATFORM`
   subdirectory is load-bearing — `dockers_v2` stages binaries there, unlike legacy `dockers:`.
   Pure-Go xz is what lets this be a scratch-style image with no `xz` binary.
-- Plugin discovery: the docs list a project-local `.dr/plugins/` directory, but **dr v0.2.86
-  does not scan it** — verified by discovering the same binary from `PATH` and not from
-  `.dr/plugins/`. `task install:local` therefore installs onto `PATH`, which is also where the
-  other `dr-*` plugins live.
+- Plugin discovery: two of the three documented locations work. A `dr-`-prefixed binary on
+  `PATH` is discovered, and so is a managed install under
+  `$XDG_CONFIG_HOME/datarobot/plugins/<name>/` (what `dr plugin install` writes). The
+  project-local `.dr/plugins/` directory the docs also list is **not scanned by dr v0.2.86** —
+  verified by discovering the same binary from `PATH` and not from `.dr/plugins/`.
+  `task install:local` therefore installs onto `PATH`, which is where the other `dr-*` plugins
+  live; `task plugin:package` produces the archive for the managed form.
+- Cobra derives `Name()` from the first word of `Use`, and every usage line is built from
+  `CommandPath()`, which is built from `Name()`. A two-word invocation like `dr sync` therefore
+  cannot go in `Use`: it goes in `cobra.CommandDisplayNameAnnotation`, which `UseLine`
+  substitutes. Without it the help under the plugin reads `dr upload <path>`.
 - Plugin archive via `task plugin:package`: stage `manifest.json`, `LICENSE.txt` (required by
   the packager), `dr-sync.sh` + `dr-sync.ps1` wrappers that `exec` the right
   `dr-sync-<goos>-<goarch>`, and those binaries, then
