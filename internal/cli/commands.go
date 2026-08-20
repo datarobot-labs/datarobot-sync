@@ -13,9 +13,18 @@ import (
 	"github.com/datarobot/golang-datarobot-filesync/internal/version"
 )
 
-// Commands returns the subcommand registry. The order here is the order shown in help.
+// Commands returns the subcommand registry. The order here is the order shown in help, so it
+// runs from the things a new user needs to the things only maintenance needs.
 func Commands() *Registry {
 	return NewRegistry(
+		initCommand(),
+		uploadCommand(),
+		downloadCommand(),
+		statusCommand(),
+		lsCommand(),
+		inspectCommand(),
+		compactCommand(),
+		gcCommand(),
 		versionCommand(),
 	)
 }
