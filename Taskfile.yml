@@ -168,7 +168,7 @@ tasks:
     cmds:
       - ./scripts/package-plugin.sh
 
-  install:local:
+  install:
     desc: "Install dr-sync onto PATH so `dr sync ...` runs this working tree (INSTALL_DIR=~/.local/bin)"
     deps: [check:toolchain]
     vars:
@@ -182,7 +182,7 @@ tasks:
         echo "✅ installed {{.INSTALL_DIR}}/dr-sync"
         echo "   ensure {{.INSTALL_DIR}} is on PATH, then: dr plugin list && dr sync --help"
 
-  uninstall:local:
+  uninstall:
     desc: Remove the locally installed dr-sync
     vars:
       INSTALL_DIR: '{{.INSTALL_DIR | default "$HOME/.local/bin"}}'
