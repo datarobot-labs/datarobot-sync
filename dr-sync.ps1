@@ -1,5 +1,9 @@
 # Wrapper shipped inside the `dr` plugin archive. The archive carries one binary per
 # platform, so this picks the right one and runs it with the arguments untouched.
+#
+# The binaries live under bin/, not next to this script: the CLI's plugin-script scanner
+# treats any extension-less dr-prefixed file in the plugin root as a candidate script, so a
+# flat layout lets it pick a wrong-platform binary directly instead of this wrapper.
 $ErrorActionPreference = 'Stop'
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -13,7 +17,7 @@ $binary = switch ($env:PROCESSOR_ARCHITECTURE) {
     }
 }
 
-$path = Join-Path $scriptDir $binary
+$path = Join-Path (Join-Path $scriptDir 'bin') $binary
 
 & $path @args
 exit $LASTEXITCODE

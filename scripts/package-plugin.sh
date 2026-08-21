@@ -1,10 +1,11 @@
 #!/bin/sh
 # Assemble the `dr` plugin archive from the cross-compiled binaries in dist/.
 #
-# The archive is flat at the root: manifest.json, the two wrappers, LICENSE.txt (required by
-# the packager), versions.yaml, and one binary per platform. `manifest.json`'s `scripts` map
-# points at the wrappers, and the executable bit must already be set in the tar because the
-# CLI does not chmod on install.
+# manifest.json, the two wrappers, LICENSE.txt (required by the packager), and versions.yaml
+# sit at the archive root; the platform binaries go under bin/. They can't sit flat at the
+# root: the CLI's plugin-script scanner treats any extension-less dr-prefixed file there as a
+# candidate script, so it would pick a wrong-platform binary directly instead of the wrapper.
+# The executable bit must already be set in the tar because the CLI does not chmod on install.
 set -eu
 
 if ! command -v dr >/dev/null 2>&1; then
@@ -40,9 +41,10 @@ cp dr-sync.sh "$STAGING/dr-sync.sh"
 cp dr-sync.ps1 "$STAGING/dr-sync.ps1"
 chmod +x "$STAGING/dr-sync.sh"
 
+mkdir -p "$STAGING/bin"
 for binary in $BINARIES; do
-    cp "$binary" "$STAGING/"
-    chmod +x "$STAGING/$(basename "$binary")"
+    cp "$binary" "$STAGING/bin/"
+    chmod +x "$STAGING/bin/$(basename "$binary")"
 done
 
 mkdir -p dist

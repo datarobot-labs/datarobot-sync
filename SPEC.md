@@ -495,8 +495,13 @@ with goreleaser OSS v2 (2.15.4 locally supports it).
   substitutes. Without it the help under the plugin reads `dr upload <path>`.
 - Plugin archive via `task plugin:package`: stage `manifest.json`, `LICENSE.txt` (required by
   the packager), `dr-sync.sh` + `dr-sync.ps1` wrappers that `exec` the right
-  `dr-sync-<goos>-<goarch>`, and those binaries, then
+  `dr-sync-<goos>-<goarch>` binary from `bin/`, then
   `dr self plugin package "$STAGING" -o dist/ --index-output dist/index-fragment.json`.
+  The binaries must live under `bin/`, not flat at the plugin root: the CLI's
+  `FindPluginScript` scans the root for a `dr`-prefixed file with no extension (or `.sh`/
+  `.ps1`) and returns the first match in directory order, so a flat layout lets it pick a
+  wrong-platform binary directly — e.g. `dr-sync-darwin-amd64` on a Linux CI runner — instead
+  of the wrapper, which fails with `exec format error`.
   The packager execs the wrapper with `--dr-plugin-manifest` and diffs it against
   `manifest.json`, so the two must agree exactly on name/version/description/authentication —
   `task lint` gets a check asserting the manifest version matches the git tag.
