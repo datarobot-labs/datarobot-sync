@@ -194,6 +194,18 @@ tasks:
     cmds:
       - goreleaser release --snapshot --clean
 
+  docs:serve:
+    desc: Serve the documentation site locally with live reload
+    dir: docs
+    cmds:
+      - hugo server
+
+  docs:build:
+    desc: Build the documentation site into docs/public
+    dir: docs
+    cmds:
+      - hugo --minify --gc
+
   clean:
     desc: Remove build output and tool cache
     cmds:
