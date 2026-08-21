@@ -58,7 +58,10 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install the dr CLI
-        run: curl -fsSL https://cli.datarobot.com/install.sh | sh
+        run: |
+          set -o pipefail
+          curl -fsSL https://cli.datarobot.com/install | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       # goreleaser produces one archive per platform; the dr plugin registry expects a single
       # archive holding every platform behind a wrapper, so it is assembled separately.

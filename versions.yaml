@@ -10,6 +10,6 @@ dr:
   command: dr self version
   url: https://github.com/datarobot-oss/cli
   install:
-    macos: curl -fsSL https://cli.datarobot.com/install.sh | sh
-    linux: curl -fsSL https://cli.datarobot.com/install.sh | sh
-    windows: powershell -c "irm https://cli.datarobot.com/install.ps1 | iex"
+    macos: curl -fsSL https://cli.datarobot.com/install | sh
+    linux: curl -fsSL https://cli.datarobot.com/install | sh
+    windows: powershell -c "irm https://raw.githubusercontent.com/datarobot-oss/cli/main/install.ps1 | iex"

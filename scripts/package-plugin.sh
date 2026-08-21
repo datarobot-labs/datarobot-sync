@@ -9,7 +9,7 @@ set -eu
 
 if ! command -v dr >/dev/null 2>&1; then
     echo "✗ the dr CLI is not on PATH" >&2
-    echo "  install: curl -fsSL https://cli.datarobot.com/install.sh | sh" >&2
+    echo "  install: curl -fsSL https://cli.datarobot.com/install | sh" >&2
     exit 1
 fi
 
