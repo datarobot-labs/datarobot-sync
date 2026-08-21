@@ -4,6 +4,10 @@
 #
 # `dr self plugin package` runs this with --dr-plugin-manifest during validation, so the
 # exec'd binary must answer that flag — it does, before anything else.
+#
+# The binaries live under bin/, not next to this script: the CLI's plugin-script scanner
+# treats any extension-less dr-prefixed file in the plugin root as a candidate script, so a
+# flat layout lets it pick a wrong-platform binary directly instead of this wrapper.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -21,4 +25,4 @@ case "$(uname -s)-$(uname -m)" in
         ;;
 esac
 
-exec "$SCRIPT_DIR/$BINARY" "$@"
+exec "$SCRIPT_DIR/bin/$BINARY" "$@"
