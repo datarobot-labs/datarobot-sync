@@ -216,6 +216,7 @@ func TestObjectNaming(t *testing.T) {
 	assert.Equal(t, ".dr-sync/manifests/", ManifestsPrefix(DefaultMetaPrefix))
 	assert.Equal(t, ".dr-sync/packs/", PacksPrefix(DefaultMetaPrefix))
 	assert.Equal(t, ".dr-sync/locks/", LocksPrefix(DefaultMetaPrefix))
+	assert.Equal(t, ".dr-sync/writers/", WritersPrefix(DefaultMetaPrefix))
 	assert.Equal(t, ".dr-sync/README.txt", ReadmePath(DefaultMetaPrefix))
 
 	// A configured prefix must work with or without its trailing slash.

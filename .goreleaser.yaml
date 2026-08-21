@@ -98,7 +98,11 @@ release:
     ## Container image
 
     ```sh
-    docker run --rm -v "$PWD:/data" \
+    docker run --rm -v "$PWD:/tmp/data" \
       -e DATAROBOT_ENDPOINT -e DATAROBOT_API_TOKEN -e DR_SYNC_CATALOG_ID \
-      ghcr.io/datarobot/dr-sync:{{ .Version }} upload /data
+      ghcr.io/datarobot/dr-sync:{{ .Version }} upload /tmp/data
     ```
+
+    Mounted at `/tmp/data`, not `/data`: a DataRobot execution environment's container only
+    has `/tmp` writable. See `docs/quickstart.md` for `watch` as a resident container and a
+    cron-scheduled push.

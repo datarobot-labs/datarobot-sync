@@ -61,6 +61,9 @@ type State struct {
 	// recognized from the listing, with no download and no re-upload.
 	Objects map[string]drapi.FileEntry
 	Leases  []Lease
+	// Writers is who else is resident on this container, from the writers registry. Advisory
+	// only, like Leases: there is nothing here that enforces anything.
+	Writers []Writer
 }
 
 // ReadState lists everything under the reserved prefix.
@@ -96,6 +99,19 @@ func (s *Store) ReadState(ctx context.Context) (*State, error) {
 			}
 
 			state.Leases = append(state.Leases, lease)
+
+			continue
+		}
+
+		if _, _, ok := parseWriterObjectName(s.metaPrefix, entry.Name); ok {
+			writer, err := s.loadWriter(ctx, entry.Name)
+			if err != nil {
+				// Same reasoning as an unreadable lease: it must stay visible so the stale
+				// sweep can clear it, and with no deadline it reads as expired.
+				writer = Writer{ObjectName: entry.Name}
+			}
+
+			state.Writers = append(state.Writers, writer)
 		}
 	}
 

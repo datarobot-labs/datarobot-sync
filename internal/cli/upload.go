@@ -68,10 +68,13 @@ type uploadFlags struct {
 	force            bool
 }
 
-func (u *uploadFlags) register(cmd *cobra.Command) {
+// register adds the shared upload flags. deleteDefault lets a caller flip what --delete
+// defaults to: off for a one-shot upload, which stays additive unless asked otherwise, on for
+// watch, which is expected to mirror the local tree.
+func (u *uploadFlags) register(cmd *cobra.Command, deleteDefault bool) {
 	flags := cmd.Flags()
 
-	flags.BoolVar(&u.delete, "delete", false, "drop paths from the manifest that are no longer local")
+	flags.BoolVar(&u.delete, "delete", deleteDefault, "drop paths from the manifest that are no longer local")
 	flags.BoolVar(&u.followSymlinks, "follow-symlinks", false,
 		"store what links point at instead of the links")
 	flags.IntVar(&u.level, "level", manifest.DefaultLevel,
@@ -115,7 +118,7 @@ func newUploadCommand(global *globalFlags) *cobra.Command {
 		},
 	}
 
-	opts.register(cmd)
+	opts.register(cmd, false)
 
 	return cmd
 }
@@ -267,7 +270,7 @@ func newStatusCommand(global *globalFlags) *cobra.Command {
 		},
 	}
 
-	opts.register(cmd)
+	opts.register(cmd, false)
 
 	return cmd
 }

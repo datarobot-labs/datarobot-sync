@@ -1,0 +1,16 @@
+[Unit]
+Description=dr-sync upload — one snapshot push of %h/my-project
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=DR_SYNC_CATALOG_ID=REPLACE_WITH_YOUR_CONTAINER_ID
+ExecStart=/usr/local/bin/dr-sync upload %h/my-project --delete
+
+# No endpoint or token here either — see dr-sync-watch.service's comment, and
+# ../../docs/quickstart.md § Credentials. Unlike cron, a systemd service run as your user
+# inherits neither a stripped environment nor a surprising $HOME, so this needs nothing extra
+# to find %h/.config/datarobot/drconfig.yaml.
+
+# Triggered by dr-sync-backup.timer, not WantedBy — this unit does nothing on its own.

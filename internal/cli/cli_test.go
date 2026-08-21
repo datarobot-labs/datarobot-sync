@@ -9,6 +9,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -57,12 +58,43 @@ func TestRootHelpListsEveryCommand(t *testing.T) {
 	require.Equal(t, CodeOK, code)
 
 	for _, name := range []string{
-		"init", "upload", "download", "status", "ls", "inspect", "compact", "gc", "version",
+		"init", "upload", "download", "watch", "status", "ls", "inspect", "compact", "gc", "version",
 		// cobra contributes this one, and it is worth having.
 		"completion",
 	} {
 		assert.Contains(t, out, name)
 	}
+}
+
+// watch mirrors the local tree by default; upload stays additive unless asked otherwise. Both
+// share the same flag registration, so this is what actually distinguishes them.
+func TestWatchDefaultsToDeleteUnlikeUpload(t *testing.T) {
+	isolate(t)
+
+	_, uploadHelp, _ := run(t, "upload", "--help")
+	_, watchHelp, _ := run(t, "watch", "--help")
+
+	assert.NotContains(t, deleteFlagLine(t, uploadHelp), "default true",
+		"upload must stay additive by default")
+	assert.Contains(t, deleteFlagLine(t, watchHelp), "default true",
+		"watch must mirror the local tree by default")
+}
+
+// deleteFlagLine finds the flag-listing line for --delete, not any mention of it in prose:
+// the Long description talks about --delete too, so a plain substring search would find that
+// instead of the flag definition it is meant to check.
+func deleteFlagLine(t *testing.T, help string) string {
+	t.Helper()
+
+	for line := range strings.SplitSeq(help, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "--delete") {
+			return line
+		}
+	}
+
+	t.Fatalf("--delete flag definition not found in help:\n%s", help)
+
+	return ""
 }
 
 // A bare invocation should say what to do, not exit zero as though it worked.

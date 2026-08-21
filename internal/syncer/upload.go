@@ -57,6 +57,11 @@ type UploadOptions struct {
 	Lock     bool
 	LeaseTTL time.Duration
 	Force    bool
+	// ClientID, when set, names the lease this run takes rather than minting a fresh random
+	// one. A resident caller that runs many uploads under one identity needs this: with a new
+	// random id every call, a lease left behind by a run that died mid-commit looks foreign to
+	// the very process that orphaned it, and the next run blocks for the full lease TTL.
+	ClientID string
 
 	DryRun bool
 }
@@ -467,9 +472,14 @@ func (r *uploadRun) acquireLease(ctx context.Context) (*LeaseHolder, error) {
 		return nil, nil
 	}
 
-	clientID, err := manifest.NewClientID()
-	if err != nil {
-		return nil, err
+	clientID := r.opts.ClientID
+	if clientID == "" {
+		generated, err := manifest.NewClientID()
+		if err != nil {
+			return nil, err
+		}
+
+		clientID = generated
 	}
 
 	holder, err := AcquireLease(ctx, r.store, r.state, clientID, r.opts.LeaseTTL, r.opts.Force)

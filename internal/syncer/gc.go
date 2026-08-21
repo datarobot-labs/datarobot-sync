@@ -45,6 +45,9 @@ type CollectPlan struct {
 	Manifests []string
 	Packs     []string
 	Leases    []string
+	// Writers is stale entries from the resident-writer registry. They sit outside the
+	// pack/manifest reference graph, so nothing else will ever reclaim them.
+	Writers []string
 	// Retained is the manifests that will survive, newest first.
 	Retained []manifest.Ref
 	Bytes    int64
@@ -52,21 +55,24 @@ type CollectPlan struct {
 
 // Names returns every object the plan would delete.
 func (p *CollectPlan) Names() []string {
-	names := make([]string, 0, len(p.Manifests)+len(p.Packs)+len(p.Leases))
+	names := make([]string, 0, len(p.Manifests)+len(p.Packs)+len(p.Leases)+len(p.Writers))
 
 	// Manifests first. The ordering invariant is that a pack may only be deleted after the
 	// last manifest referencing it is gone, so a pass that is interrupted halfway leaves
-	// packs without a manifest rather than a manifest without its packs.
+	// packs without a manifest rather than a manifest without its packs. Leases and writers
+	// are both advisory and unreferenced by anything, so their order relative to the rest
+	// does not matter.
 	names = append(names, p.Manifests...)
 	names = append(names, p.Packs...)
 	names = append(names, p.Leases...)
+	names = append(names, p.Writers...)
 
 	return names
 }
 
 // Empty reports whether there is nothing to do.
 func (p *CollectPlan) Empty() bool {
-	return len(p.Manifests) == 0 && len(p.Packs) == 0 && len(p.Leases) == 0
+	return len(p.Manifests) == 0 && len(p.Packs) == 0 && len(p.Leases) == 0 && len(p.Writers) == 0
 }
 
 // PlanCollect decides what can be removed, given the current listing.
@@ -118,6 +124,7 @@ func PlanCollect(ctx context.Context, store *Store, state *State, opts CollectOp
 	collectUnreferencedPacks(plan, store, state, referenced, now, grace)
 
 	plan.Leases = StaleLeaseNames(state.Leases, now)
+	plan.Writers = StaleWriterNames(state.Writers, now)
 
 	sort.Strings(plan.Manifests)
 	sort.Strings(plan.Packs)

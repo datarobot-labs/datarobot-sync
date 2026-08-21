@@ -48,13 +48,18 @@ task install:local     # builds into ~/.local/bin/dr-sync
 Building from source needs Go as pinned in `.tool-versions`; with asdf, run `asdf reshim` after
 first checkout so the `go` shim exists.
 
-As a container:
+As a container. The mount target is `/tmp/data`, not `/data`: a DataRobot execution
+environment's container only has `/tmp` writable, and mounting there means this works
+unmodified whether it runs on your own infra or inside one of those.
 
 ```sh
-docker run --rm -v "$PWD:/data" \
+docker run --rm -v "$PWD:/tmp/data" \
   -e DATAROBOT_ENDPOINT -e DATAROBOT_API_TOKEN -e DR_SYNC_CATALOG_ID \
-  ghcr.io/datarobot/dr-sync:latest upload /data
+  ghcr.io/datarobot/dr-sync:latest upload /tmp/data
 ```
+
+See [`docs/quickstart.md`](docs/quickstart.md) for a full walkthrough, including running
+`watch` as a resident container/systemd/launchd service and `upload` on a cron schedule.
 
 ## Configuration
 
@@ -127,6 +132,45 @@ node_modules/
 !important.log
 ```
 
+## Watch
+
+`dr-sync watch <path>` is a resident process that keeps pushing a directory as it changes,
+instead of running `upload` in a loop yourself:
+
+```sh
+dr-sync watch ./src
+```
+
+It shares every `upload` flag, but `--delete` defaults **on** — watch mirrors the local tree
+rather than only adding to it — and `--timeout` bounds one push, not the whole process. A
+filesystem event only ever triggers a rescan; it is never trusted on its own, so a missed
+event costs latency, not correctness.
+
+Flags worth knowing:
+
+| Flag | Default | |
+|---|---|---|
+| `--debounce` | `2s` | wait for the tree to go quiet before pushing |
+| `--min-interval` | `15s` | floor between the start of two pushes |
+| `--poll-interval` | `60s` | rescan on a timer regardless of events (`0` disables it) |
+| `--poll-only` | off | skip the OS watcher entirely — for network filesystems |
+| `--gc-interval` | `10m` | how often unreferenced objects are swept (`0` disables it) |
+| `--writer-ttl` | `5m` | how long this process advertises itself as active |
+
+`watch` uses your OS's native filesystem notifications (inotify on Linux, kqueue on
+macOS/BSD, ReadDirectoryChangesW on Windows), one watch per directory. Each one costs a
+watch descriptor: a very large tree, or several `watch` processes at once, can hit a
+platform limit.
+
+- **Linux (inotify):** raise `fs.inotify.max_user_watches` (and `max_user_instances` if
+  running several watchers), e.g. `sudo sysctl fs.inotify.max_user_watches=524288`.
+- **macOS/BSD (kqueue):** kqueue needs one open file descriptor per watched directory, so
+  raise the process's open-file limit, e.g. `ulimit -n 65536`.
+
+If a limit is hit mid-run, `watch` warns and falls back to polling for the rest of that
+directory tree rather than exiting — pass `--poll-only` to skip straight to that and avoid
+the warning.
+
 ## What the container looks like
 
 dr-sync does not store your files at their own paths. Everything lives under a reserved
@@ -136,6 +180,7 @@ prefix as immutable objects:
 .dr-sync/manifests/0000000042-7f3a9c2b.json.xz   the file tree, one per push
 .dr-sync/packs/p_9f2a1c8d3e4f5061.tar.xz         contents, named after their own digest
 .dr-sync/locks/<client>-<n>.lock                 advisory claims held during a push
+.dr-sync/writers/<client>-<n>.json               resident `watch` processes announcing themselves
 ```
 
 That is a deliberate trade. DataRobot's intake cannot unpack xz, so genuine LZMA2 compression
@@ -154,6 +199,11 @@ compare-and-swap. dr-sync takes an advisory lease, revalidates immediately befor
 and reports a fork afterwards if one happened. A genuine simultaneous push means one side's
 update is not in the head — detected, never silently corrupted, and healed by re-running.
 `--force` overrides the lease when the holder is known to be gone.
+
+A resident `watch` process additionally announces itself in `.dr-sync/writers/`, so a peer
+can tell it is active. If the container moves while `watch` is running, it holds back
+`--delete` for that cycle and warns instead of racing another writer's paths; `--force`
+overrides that too.
 
 ## Exit codes
 

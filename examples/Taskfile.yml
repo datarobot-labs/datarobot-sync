@@ -1,0 +1,55 @@
+version: '3'
+
+# Sample sync targets for a project that keeps its working tree mirrored to a DataRobot Files
+# container. Copy the tasks you want into your own Taskfile.yml, or `includes: {sync: ./Taskfile.sync.yml}`
+# this file directly.
+#
+# Credentials are never a var here on purpose: dr-sync resolves DATAROBOT_ENDPOINT and
+# DATAROBOT_API_TOKEN itself (env, then ~/.config/datarobot/drconfig.yaml), so nothing about
+# them belongs in a Taskfile. `export DR_SYNC_CATALOG_ID=...` once per shell (or in CI env) is
+# enough — it is not a credential, just the id `sync:init` prints below.
+#
+# See ../docs/quickstart.md for the full walkthrough this is drawn from.
+
+vars:
+  # `dr-sync` if installed standalone (`task install:local`), `dr sync` if installed as a
+  # plugin. Override with `task --set DR_SYNC="dr sync" sync:push` or just edit this line.
+  DR_SYNC: dr-sync
+  # The directory this project syncs. "." if the Taskfile lives at the project root.
+  SYNC_PATH: .
+
+tasks:
+  sync:init:
+    desc: Create the container this project syncs to (run once; export DR_SYNC_CATALOG_ID with the id it prints)
+    cmds:
+      - "{{.DR_SYNC}} init --name {{.SYNC_NAME | default \"my-project\"}}"
+
+  sync:status:
+    desc: Show what a push would do, without writing anything
+    cmds:
+      - "{{.DR_SYNC}} status {{.SYNC_PATH}}"
+
+  sync:push:
+    desc: Push local changes, dropping paths that no longer exist locally
+    cmds:
+      - "{{.DR_SYNC}} upload {{.SYNC_PATH}} --delete"
+
+  sync:pull:
+    desc: Pull the latest from the container, dropping local paths the container no longer has
+    cmds:
+      - "{{.DR_SYNC}} download {{.SYNC_PATH}} --delete"
+
+  sync:watch:
+    desc: Keep pushing local changes while you work — Ctrl-C to stop
+    cmds:
+      - "{{.DR_SYNC}} watch {{.SYNC_PATH}} --verbose"
+
+  sync:compact:
+    desc: Reclaim dead pack bytes left behind by a long watch session
+    cmds:
+      - "{{.DR_SYNC}} compact {{.SYNC_PATH}}"
+
+  sync:gc:
+    desc: Tier-1 garbage collection only — cheap enough to run from CI on a timer
+    cmds:
+      - "{{.DR_SYNC}} gc"

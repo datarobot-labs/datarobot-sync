@@ -1,0 +1,31 @@
+# Runs a scheduled `dr-sync upload` — a periodic snapshot push, the opposite shape from
+# `watch`, which needs no image beyond the published one (see docker-compose.yml's `watch`
+# service, which just runs it with a different argv).
+#
+# supercronic instead of cron/crond: it is a normal foreground process, not a setuid daemon,
+# so it runs as an ordinary nonroot user and does not reset the environment before running a
+# job — cron does, which is what makes "docker run -e" vanish inside a cron job under real
+# cron and is a wart this sidesteps entirely rather than working around.
+#
+# The runtime image is cgr.dev/chainguard/busybox: still Wolfi/Chainguard, nonroot by
+# default, and about as small as an image can be while still having the /bin/sh supercronic
+# execs each crontab line through — true chainguard/static ships no shell at all, which is
+# what the published dr-sync image itself is built on (fine there: it never execs a shell).
+ARG DR_SYNC_VERSION=latest
+ARG SUPERCRONIC_VERSION=v0.2.49
+
+FROM ghcr.io/datarobot/dr-sync:${DR_SYNC_VERSION} AS dr-sync
+
+# go install verifies the module against the Go checksum database, so this needs no manually
+# pinned release hash the way curling a binary release would.
+FROM golang:1.26-alpine AS supercronic
+ARG SUPERCRONIC_VERSION
+ENV CGO_ENABLED=0
+RUN go install "github.com/aptible/supercronic@${SUPERCRONIC_VERSION}"
+
+FROM cgr.dev/chainguard/busybox:latest
+COPY --from=dr-sync     /dr-sync              /usr/local/bin/dr-sync
+COPY --from=supercronic /go/bin/supercronic   /usr/local/bin/supercronic
+COPY crontab /app/crontab
+
+ENTRYPOINT ["supercronic", "-passthrough-logs", "/app/crontab"]
