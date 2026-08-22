@@ -101,7 +101,7 @@ func runWatch(cmd *cobra.Command, args []string, global *globalFlags, opts *watc
 
 	ctx := cmd.Context()
 
-	registration, err := syncer.RegisterWriter(ctx, session.store, clientID, "watch", root, opts.writerTTL)
+	registration, err := registerWatchWriter(ctx, global, session, clientID, root, opts.writerTTL)
 	if err != nil {
 		return classify(err)
 	}
@@ -158,6 +158,17 @@ func runWatch(cmd *cobra.Command, args []string, global *globalFlags, opts *watc
 	}
 
 	return nil
+}
+
+// registerWatchWriter announces this process's presence on the container, unless --dry-run
+// promised nothing would be written: a registration would otherwise outlive the run in the
+// writer registry even though the run itself changed nothing.
+func registerWatchWriter(ctx context.Context, global *globalFlags, session *session, clientID, root string, ttl time.Duration) (*syncer.WriterRegistration, error) {
+	if global.dryRun {
+		return nil, nil
+	}
+
+	return syncer.RegisterWriter(ctx, session.store, clientID, "watch", root, ttl)
 }
 
 // watchCycle holds what one cycle needs across the life of the daemon: the session, the static
@@ -225,6 +236,10 @@ func (c *watchCycle) onTrigger(ctx context.Context, trigger watcher.Trigger, ok 
 }
 
 func (c *watchCycle) refreshWriter(ctx context.Context, registration *syncer.WriterRegistration) {
+	if registration == nil {
+		return
+	}
+
 	if err := registration.Refresh(ctx, c.lastGeneration, c.lastManifestID); err != nil {
 		c.session.reporter.Warn("refreshing the writer registration: " + err.Error())
 	}
@@ -314,6 +329,7 @@ func (c *watchCycle) run(ctx context.Context, trigger watcher.Trigger) error {
 		LeaseTTL:         c.opts.upload.leaseTTL,
 		Force:            c.opts.upload.force,
 		ClientID:         c.clientID,
+		DryRun:           c.global.dryRun,
 	})
 	if err != nil {
 		return c.handleCycleError(classify(err))
@@ -345,6 +361,49 @@ func (c *watchCycle) run(ctx context.Context, trigger watcher.Trigger) error {
 	}
 
 	c.reportHint(result.CompactHint)
+
+	if err := c.maybeCompact(cycleCtx, result); err != nil {
+		return c.handleCycleError(err)
+	}
+
+	return nil
+}
+
+// maybeCompact rewrites sparse packs after a cycle when --compact was requested, exactly as
+// `upload --compact` does after its one push. A manifest it commits becomes this process's new
+// baseline, or the next cycle would see its own compaction as a foreign write and needlessly
+// hold back --delete.
+func (c *watchCycle) maybeCompact(ctx context.Context, uploaded *syncer.UploadResult) error {
+	if !c.opts.upload.compact || uploaded.DryRun {
+		return nil
+	}
+
+	result, err := runCompaction(ctx, c.session, compactSettings{
+		root:             c.root,
+		threshold:        c.opts.upload.compactThreshold,
+		level:            c.opts.upload.level,
+		packInputMax:     c.opts.upload.packInputMax,
+		bigFileThreshold: c.opts.upload.bigFileThreshold,
+		sliceSize:        c.opts.upload.sliceSize,
+		jobs:             c.global.jobs,
+		uploadJobs:       c.opts.upload.uploadJobs,
+		tempDir:          c.opts.upload.tempDir,
+		maxStageFiles:    c.opts.upload.maxStageFiles,
+		maxStageBytes:    c.opts.upload.maxStageBytes,
+		gcGrace:          c.opts.upload.gcGrace,
+		lock:             !c.opts.upload.noLock,
+		leaseTTL:         c.opts.upload.leaseTTL,
+		force:            c.opts.upload.force,
+	})
+	if err != nil {
+		return err
+	}
+
+	if result.Manifest != nil {
+		c.lastHeadID = result.Manifest.ID
+		c.lastGeneration = result.Manifest.Generation
+		c.lastManifestID = result.Manifest.ID
+	}
 
 	return nil
 }
@@ -441,6 +500,10 @@ func (c *watchCycle) reportHint(hint string) {
 // fork exactly as `upload` and `gc` do: the losing manifest may be the only reference to packs
 // that would otherwise look unreferenced.
 func (c *watchCycle) gcSweep(ctx context.Context) {
+	if c.global.dryRun {
+		return
+	}
+
 	session := c.session
 
 	state, err := session.store.ReadState(ctx)

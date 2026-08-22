@@ -110,6 +110,12 @@ type Watcher struct {
 	watched  map[string]bool
 	matcher  atomic.Pointer[scan.Matcher]
 
+	// havePushed and lastPushStart record the last trigger this Watcher actually delivered,
+	// of any Reason — Initial and Poll included. Both run() and loop() are the single
+	// goroutine started by Run, so these need no synchronization of their own.
+	havePushed    bool
+	lastPushStart time.Time
+
 	triggers chan Trigger
 	warn     func(string)
 }
@@ -255,7 +261,7 @@ func (w *Watcher) onEvent(event fsnotify.Event, ok bool, events <-chan fsnotify.
 	}
 
 	w.handleEvent(event, debounce)
-	resetTimer(timer, debounce.Deadline())
+	resetTimer(timer, debounce.Deadline(w.lastPushStart, w.havePushed))
 
 	return events
 }
@@ -286,11 +292,11 @@ func (w *Watcher) firePoll(ctx context.Context) error {
 // should stop: ctx was done while sending.
 func (w *Watcher) fireDebounced(ctx context.Context, debounce *debouncer) error {
 	now := time.Now()
-	if !debounce.Ready(now) {
+	if !debounce.Ready(now, w.lastPushStart, w.havePushed) {
 		return nil
 	}
 
-	if w.sendTrigger(ctx, debounce.Fire(now)) {
+	if w.sendTrigger(ctx, debounce.Fire()) {
 		return nil
 	}
 
@@ -343,9 +349,16 @@ func resetTimer(t *time.Timer, deadline time.Time) {
 	t.Reset(max(time.Until(deadline), 0))
 }
 
+// sendTrigger delivers trigger and, once it actually lands with the consumer, records this as
+// the last push for --min-interval purposes — for every Reason, not only a debounced one, and
+// at delivery time rather than whenever the caller decided to fire, since an unbuffered send
+// can sit blocked behind a long-running previous cycle well past that decision.
 func (w *Watcher) sendTrigger(ctx context.Context, trigger Trigger) bool {
 	select {
 	case w.triggers <- trigger:
+		w.havePushed = true
+		w.lastPushStart = time.Now()
+
 		return true
 	case <-ctx.Done():
 		return false

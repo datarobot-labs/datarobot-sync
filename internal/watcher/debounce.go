@@ -17,6 +17,11 @@ const maxSample = 5
 // It holds no timer of its own: every method takes the current time explicitly, so the whole
 // state machine is exercised by feeding it timestamps rather than waiting on real clocks. The
 // caller (Watcher) is the one thing that owns a real timer, armed against Deadline.
+//
+// It also holds no memory of when the last push actually started: Initial and Poll triggers
+// reach the caller without ever going through the debouncer, so a floor tracked in here would
+// miss them. The caller passes its own record of the last delivered trigger into Deadline and
+// Ready instead, so the --min-interval floor binds every kind of push, not just debounced ones.
 type debouncer struct {
 	debounce    time.Duration
 	minInterval time.Duration
@@ -26,9 +31,6 @@ type debouncer struct {
 	ignoreFile    bool
 	sample        []string
 	lastEventAt   time.Time
-
-	havePushed    bool
-	lastPushStart time.Time
 }
 
 func newDebouncer(debounce, minInterval time.Duration) *debouncer {
@@ -53,20 +55,21 @@ func (d *debouncer) Event(t time.Time, relPath string, ignoreFile bool) {
 }
 
 // Deadline is the earliest time a pending batch may fire: the tree must have been quiet for
-// debounce, and the previous push (if any) must have started at least minInterval ago. The
-// zero time means nothing is pending.
-func (d *debouncer) Deadline() time.Time {
+// debounce, and the last push the caller delivered (if any) must have started at least
+// minInterval ago. lastPushStart and havePushed describe that last delivered trigger — of any
+// reason, not only a debounced one. The zero time means nothing is pending.
+func (d *debouncer) Deadline(lastPushStart time.Time, havePushed bool) time.Time {
 	if !d.pending {
 		return time.Time{}
 	}
 
 	quiet := d.lastEventAt.Add(d.debounce)
 
-	if !d.havePushed {
+	if !havePushed {
 		return quiet
 	}
 
-	floor := d.lastPushStart.Add(d.minInterval)
+	floor := lastPushStart.Add(d.minInterval)
 	if floor.After(quiet) {
 		return floor
 	}
@@ -74,14 +77,17 @@ func (d *debouncer) Deadline() time.Time {
 	return quiet
 }
 
-// Ready reports whether a pending batch should fire at now.
-func (d *debouncer) Ready(now time.Time) bool {
-	return d.pending && !now.Before(d.Deadline())
+// Ready reports whether a pending batch should fire at now, given the caller's record of the
+// last delivered trigger (see Deadline).
+func (d *debouncer) Ready(now, lastPushStart time.Time, havePushed bool) bool {
+	return d.pending && !now.Before(d.Deadline(lastPushStart, havePushed))
 }
 
 // Fire returns a Trigger for the pending batch and resets for the next one. The caller is
-// responsible for only calling this when Ready reports true.
-func (d *debouncer) Fire(now time.Time) Trigger {
+// responsible for only calling this when Ready reports true, and for recording when the
+// trigger is actually delivered — which Fire does not know, since a busy consumer can leave it
+// blocked in the channel well past this call, and no longer tracks itself.
+func (d *debouncer) Fire() Trigger {
 	reason := ReasonChange
 	if d.ignoreFile {
 		reason = ReasonIgnoreFile
@@ -93,8 +99,6 @@ func (d *debouncer) Fire(now time.Time) Trigger {
 	d.pendingEvents = 0
 	d.ignoreFile = false
 	d.sample = nil
-	d.havePushed = true
-	d.lastPushStart = now
 
 	return trigger
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/datarobot/golang-datarobot-filesync/internal/progress"
+	"github.com/datarobot/golang-datarobot-filesync/internal/syncer"
 	"github.com/datarobot/golang-datarobot-filesync/internal/watcher"
 )
 
@@ -84,4 +85,53 @@ func TestRebuildMatcherPicksUpAnIgnoreFileEdit(t *testing.T) {
 	require.NotNil(t, cycle.session.matcher, "an ignore-file edit must rebuild the matcher without a restart")
 	assert.True(t, cycle.session.matcher.Match("debug.log", false))
 	assert.False(t, cycle.session.matcher.Match("main.go", false))
+}
+
+func TestRegisterWatchWriterSkipsUnderDryRun(t *testing.T) {
+	t.Parallel()
+
+	// A nil session.store would panic if registerWatchWriter tried to use it: reaching the
+	// end of this call without a panic already proves --dry-run took the skip path rather
+	// than announcing a presence the run promised not to write.
+	registration, err := registerWatchWriter(t.Context(), &globalFlags{dryRun: true}, &session{}, "client", "/tmp/root", 0)
+
+	require.NoError(t, err)
+	assert.Nil(t, registration, "--dry-run must not write a writer-registry entry")
+}
+
+func TestRefreshWriterToleratesNoRegistration(t *testing.T) {
+	t.Parallel()
+
+	cycle := newTestWatchCycle(t, t.TempDir())
+
+	assert.NotPanics(t, func() { cycle.refreshWriter(t.Context(), nil) },
+		"--dry-run leaves registration nil; refreshing it must be a no-op, not a crash")
+}
+
+func TestGCSweepSkipsUnderDryRun(t *testing.T) {
+	t.Parallel()
+
+	cycle := newTestWatchCycle(t, t.TempDir())
+	cycle.global.dryRun = true
+
+	// A nil session.store would panic if gcSweep tried to read state: reaching the end of
+	// this call without a panic already proves the dry-run guard fired before any use of it.
+	assert.NotPanics(t, func() { cycle.gcSweep(t.Context()) },
+		"--dry-run must never delete objects, so gcSweep must return before touching the store")
+}
+
+func TestMaybeCompactSkipsWithoutTheFlagOrUnderDryRun(t *testing.T) {
+	t.Parallel()
+
+	cycle := newTestWatchCycle(t, t.TempDir())
+
+	// Neither call reaches runCompaction, which would need a real store: reaching the end of
+	// this call without a panic already proves both guards short-circuit correctly.
+	assert.NoError(t, cycle.maybeCompact(t.Context(), &syncer.UploadResult{}),
+		"--compact was not requested, so nothing should run")
+
+	cycle.opts.upload.compact = true
+
+	assert.NoError(t, cycle.maybeCompact(t.Context(), &syncer.UploadResult{DryRun: true}),
+		"--dry-run must skip compaction even when --compact was requested")
 }

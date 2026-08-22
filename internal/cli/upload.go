@@ -180,7 +180,7 @@ func runUpload(cmd *cobra.Command, args []string, global *globalFlags, opts *upl
 		return nil
 	}
 
-	return runCompaction(ctx, session, compactSettings{
+	_, err = runCompaction(ctx, session, compactSettings{
 		root:             root,
 		threshold:        opts.compactThreshold,
 		level:            opts.level,
@@ -197,6 +197,8 @@ func runUpload(cmd *cobra.Command, args []string, global *globalFlags, opts *upl
 		leaseTTL:         opts.leaseTTL,
 		force:            opts.force,
 	})
+
+	return err
 }
 
 // parseOverwrite validates the strategy, rejecting the two the API offers but dr-sync must

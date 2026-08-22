@@ -40,7 +40,10 @@ type compactSettings struct {
 	dryRun           bool
 }
 
-func runCompaction(ctx context.Context, session *session, settings compactSettings) error {
+// runCompaction runs one compaction and reports it. The result is returned (as well as any
+// error, already classified) so a caller running compaction as part of a larger cycle — watch,
+// after a push — can fold the manifest it produced into its own bookkeeping.
+func runCompaction(ctx context.Context, session *session, settings compactSettings) (*syncer.CompactResult, error) {
 	result, err := syncer.Compact(ctx, session.store, session.reporter, syncer.CompactOptions{
 		Root:             settings.root,
 		Check:            session.check,
@@ -63,11 +66,11 @@ func runCompaction(ctx context.Context, session *session, settings compactSettin
 		DryRun:           settings.dryRun,
 	})
 	if err != nil {
-		return classify(err)
+		return nil, classify(err)
 	}
 
 	if result.Manifest == nil {
-		return nil
+		return result, nil
 	}
 
 	session.reporter.Phase("done", fmt.Sprintf("%s  %d packs rewritten  ~%s reclaimed",
@@ -81,7 +84,7 @@ func runCompaction(ctx context.Context, session *session, settings compactSettin
 		"objectsDeleted": result.Deleted,
 	})
 
-	return nil
+	return result, nil
 }
 
 func newCompactCommand(global *globalFlags) *cobra.Command {
@@ -119,7 +122,9 @@ func newCompactCommand(global *globalFlags) *cobra.Command {
 			settings.lock = !noLock
 			settings.dryRun = global.dryRun
 
-			return runCompaction(ctx, session, settings)
+			_, err = runCompaction(ctx, session, settings)
+
+			return err
 		},
 	}
 

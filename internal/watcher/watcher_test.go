@@ -181,6 +181,51 @@ func TestWatcherSetMatcherRebuildsExclusions(t *testing.T) {
 	}
 }
 
+func TestWatcherMinIntervalCountsTheInitialTrigger(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+
+	w, err := New(Options{
+		Root:        root,
+		Debounce:    5 * time.Millisecond,
+		MinInterval: 300 * time.Millisecond,
+		Warn:        func(msg string) { t.Logf("watcher warning: %s", msg) },
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		if err := w.Run(ctx); err != nil {
+			t.Logf("watcher stopped: %v", err)
+		}
+	}()
+
+	t.Cleanup(func() {
+		cancel()
+		<-done
+		require.NoError(t, w.Close())
+	})
+
+	triggers := w.Triggers()
+
+	start := time.Now()
+	initial := waitTrigger(t, triggers)
+	require.Equal(t, ReasonInitial, initial.Reason)
+
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.txt"), []byte("x"), 0o600))
+
+	trigger := waitTrigger(t, triggers)
+	assert.Equal(t, ReasonChange, trigger.Reason)
+	assert.GreaterOrEqual(t, time.Since(start), 300*time.Millisecond,
+		"the initial trigger must count toward --min-interval, exactly like a debounced one")
+}
+
 func TestWatcherPollOnlySkipsTheOSWatcherEntirely(t *testing.T) {
 	t.Parallel()
 

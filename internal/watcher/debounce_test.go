@@ -24,8 +24,8 @@ func TestDebouncerWaitsForQuiet(t *testing.T) {
 	d := newDebouncer(2*time.Second, 15*time.Second)
 
 	d.Event(epoch, "a.txt", false)
-	assert.False(t, d.Ready(epoch.Add(1*time.Second)), "not quiet yet")
-	assert.True(t, d.Ready(epoch.Add(2*time.Second)), "quiet for exactly the debounce window")
+	assert.False(t, d.Ready(epoch.Add(1*time.Second), time.Time{}, false), "not quiet yet")
+	assert.True(t, d.Ready(epoch.Add(2*time.Second), time.Time{}, false), "quiet for exactly the debounce window")
 }
 
 func TestDebouncerCoalescesABurst(t *testing.T) {
@@ -39,12 +39,12 @@ func TestDebouncerCoalescesABurst(t *testing.T) {
 
 	// The deadline tracks the *last* event, not the first: a burst that keeps arriving must
 	// keep pushing the fire time out, or a busy editor would trigger mid-save.
-	assert.False(t, d.Ready(epoch.Add(2*time.Second)), "still within debounce of the last event")
+	assert.False(t, d.Ready(epoch.Add(2*time.Second), time.Time{}, false), "still within debounce of the last event")
 
 	fireAt := epoch.Add(3 * time.Second)
-	require.True(t, d.Ready(fireAt))
+	require.True(t, d.Ready(fireAt, time.Time{}, false))
 
-	trigger := d.Fire(fireAt)
+	trigger := d.Fire()
 	assert.Equal(t, ReasonChange, trigger.Reason)
 	assert.Equal(t, 3, trigger.Events)
 	assert.Equal(t, []string{"a.txt", "b.txt", "c.txt"}, trigger.Sample)
@@ -57,17 +57,21 @@ func TestDebouncerEnforcesTheMinIntervalFloor(t *testing.T) {
 
 	d.Event(epoch, "a.txt", false)
 	first := epoch.Add(1 * time.Second)
-	require.True(t, d.Ready(first))
-	d.Fire(first)
+	require.True(t, d.Ready(first, time.Time{}, false))
+	d.Fire()
+
+	// The caller — not Fire — is what remembers a push started at first; Fire itself no
+	// longer tracks this, since Initial and Poll pushes never call it at all.
+	pushStart, havePushed := first, true
 
 	// A new event arrives well within the floor. Even once it has been quiet for the
 	// debounce window, the floor measured from the previous push's start must still bind.
 	quietAt := first.Add(2 * time.Second)
 	d.Event(quietAt, "b.txt", false)
-	assert.False(t, d.Ready(quietAt.Add(1*time.Second)), "the floor has not elapsed yet")
+	assert.False(t, d.Ready(quietAt.Add(1*time.Second), pushStart, havePushed), "the floor has not elapsed yet")
 
 	floorElapsed := first.Add(10 * time.Second)
-	assert.True(t, d.Ready(floorElapsed), "the floor has elapsed")
+	assert.True(t, d.Ready(floorElapsed, pushStart, havePushed), "the floor has elapsed")
 }
 
 func TestDebouncerEventsDuringAPushBecomeExactlyOneFollowUp(t *testing.T) {
@@ -77,24 +81,26 @@ func TestDebouncerEventsDuringAPushBecomeExactlyOneFollowUp(t *testing.T) {
 
 	d.Event(epoch, "a.txt", false)
 	pushStart := epoch.Add(1 * time.Second)
-	require.True(t, d.Ready(pushStart))
-	d.Fire(pushStart)
+	require.True(t, d.Ready(pushStart, time.Time{}, false))
+	d.Fire()
+
+	havePushed := true
 
 	// Three more events arrive while the (hypothetical) push is still running.
 	d.Event(pushStart.Add(100*time.Millisecond), "b.txt", false)
 	d.Event(pushStart.Add(200*time.Millisecond), "c.txt", false)
 	d.Event(pushStart.Add(300*time.Millisecond), "d.txt", false)
 
-	deadline := d.Deadline()
+	deadline := d.Deadline(pushStart, havePushed)
 	require.False(t, deadline.IsZero())
 
 	// One Ready+Fire at the deadline must drain everything coalesced so far, not fire once
 	// per event.
-	require.True(t, d.Ready(deadline))
-	trigger := d.Fire(deadline)
+	require.True(t, d.Ready(deadline, pushStart, havePushed))
+	trigger := d.Fire()
 	assert.Equal(t, 3, trigger.Events)
 
-	assert.False(t, d.Ready(deadline), "nothing pending after the single follow-up fired")
+	assert.False(t, d.Ready(deadline, pushStart, havePushed), "nothing pending after the single follow-up fired")
 }
 
 func TestDebouncerReasonPrioritizesTheIgnoreFile(t *testing.T) {
@@ -105,7 +111,7 @@ func TestDebouncerReasonPrioritizesTheIgnoreFile(t *testing.T) {
 	d.Event(epoch, "src/main.go", false)
 	d.Event(epoch, ".drsyncignore", true)
 
-	trigger := d.Fire(epoch.Add(time.Second))
+	trigger := d.Fire()
 	assert.Equal(t, ReasonIgnoreFile, trigger.Reason)
 }
 
@@ -118,7 +124,7 @@ func TestDebouncerSampleIsCapped(t *testing.T) {
 		d.Event(epoch, "file"+string(rune('a'+i)), false)
 	}
 
-	trigger := d.Fire(epoch.Add(time.Second))
+	trigger := d.Fire()
 	assert.Len(t, trigger.Sample, maxSample)
 	assert.Equal(t, maxSample+5, trigger.Events, "the count is not truncated, only the sample")
 }
@@ -128,6 +134,6 @@ func TestDebouncerReportsNoDeadlineWhenNothingIsPending(t *testing.T) {
 
 	d := newDebouncer(time.Second, time.Second)
 
-	assert.True(t, d.Deadline().IsZero())
-	assert.False(t, d.Ready(epoch))
+	assert.True(t, d.Deadline(time.Time{}, false).IsZero())
+	assert.False(t, d.Ready(epoch, time.Time{}, false))
 }
