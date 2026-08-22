@@ -4,7 +4,7 @@ rsync for the DataRobot Files API. A single static Go binary that makes a local 
 a DataRobot Files container match, transferring only the difference, xz-compressed.
 
 It is also a `dr` CLI plugin, so everything below works equally as `dr sync …`. Full
-documentation: <https://datarobot.github.io/golang-datarobot-filesync/>.
+documentation: [<[https://datarobot.github.io/golang-datarobot-filesync](https://verbose-adventure-nyozgq5.pages.github.io/)/>](https://verbose-adventure-nyozgq5.pages.github.io/).
 
 ```sh
 dr-sync init                          # create a container, print its id
