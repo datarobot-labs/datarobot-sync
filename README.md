@@ -1,10 +1,20 @@
-# dr-sync
+<p align="center">
+  <a href="https://github.com/datarobot/datarobot-rysnc">
+    <img src="https://af.datarobot.com/img/datarobot_logo.avif" width="600px" alt="DataRobot Logo"/>
+  </a>
+</p>
+<h2 align="center">dr-sync: DataRobot rsync</h2>
+<p align="center">
+  <a href="[https://af.datarobot.com](https://verbose-adventure-nyozgq5.pages.github.io/)">
+    <img src="https://img.shields.io/badge/documentation-a?label=Docs&labelColor=30373D&color=5B8FF9" alt="Documentation">
+  </a>
+</p>
 
 rsync for the DataRobot Files API. A single static Go binary that makes a local directory and
 a DataRobot Files container match, transferring only the difference, xz-compressed.
 
 It is also a `dr` CLI plugin, so everything below works equally as `dr sync …`. Full
-documentation: [<[https://datarobot.github.io/golang-datarobot-filesync](https://verbose-adventure-nyozgq5.pages.github.io/)/>](https://verbose-adventure-nyozgq5.pages.github.io/).
+documentation: [Docs Site](https://verbose-adventure-nyozgq5.pages.github.io/).
 
 ```sh
 dr-sync init                          # create a container, print its id
