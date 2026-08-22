@@ -1,0 +1,27 @@
+/* DM Sans (brand font) + Roboto Mono for code, matching the properdocs sites */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=Roboto+Mono:opsz,wght@6..40,400;6..40,500&display=swap');
+
+/* DataRobot brand colors as the Hextra primary color scale.
+   Light mode: indigo (#5C41FF, best contrast on white).
+   Dark mode: signature mint green (#81FBA5), on DataRobot near-black. */
+:root {
+  --primary-hue: 249deg;
+  --primary-saturation: 100%;
+  --primary-lightness: 63%;
+  --color-dark: #0b0b0b;
+}
+
+.dark {
+  --primary-hue: 141deg;
+  --primary-saturation: 85%;
+  --primary-lightness: 55%;
+}
+
+body {
+  font-family: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+}
+
+code,
+pre {
+  font-family: 'Roboto Mono', ui-monospace, monospace;
+}
