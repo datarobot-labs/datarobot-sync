@@ -8,6 +8,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -117,6 +118,10 @@ func runWatch(cmd *cobra.Command, args []string, global *globalFlags, opts *watc
 		Warn:         session.reporter.Warn,
 	})
 	if err != nil {
+		if deregErr := registration.Deregister(ctx); deregErr != nil {
+			session.reporter.Warn(deregErr.Error())
+		}
+
 		return Fail(CodeUsage, err)
 	}
 
@@ -129,6 +134,7 @@ func runWatch(cmd *cobra.Command, args []string, global *globalFlags, opts *watc
 		root:      root,
 		clientID:  clientID,
 		overwrite: overwrite,
+		watcher:   w,
 		warned:    map[string]bool{},
 	}
 
@@ -164,6 +170,7 @@ type watchCycle struct {
 	root      string
 	clientID  string
 	overwrite drapi.OverwriteStrategy
+	watcher   *watcher.Watcher
 
 	lastHeadID     string
 	lastGeneration int64
@@ -259,6 +266,10 @@ func (c *watchCycle) run(ctx context.Context, trigger watcher.Trigger) error {
 
 	session := c.session
 
+	if trigger.Reason == watcher.ReasonIgnoreFile {
+		c.rebuildMatcher()
+	}
+
 	session.reporter.Phase("watch", fmt.Sprintf("%s (%d events)", trigger.Reason, trigger.Events))
 
 	state, err := session.store.ReadState(cycleCtx)
@@ -316,10 +327,21 @@ func (c *watchCycle) run(ctx context.Context, trigger watcher.Trigger) error {
 		"dirty":  dirty,
 	})
 
-	if result.Manifest != nil {
+	// A no-op cycle commits nothing, but the head it saw is still this process's baseline:
+	// without falling back to it here, an already-in-sync tree never sets lastHeadID, so
+	// dirty() can never fire and the --delete holdback never arms.
+	head, haveHead := manifest.SelectHead(state.Manifests)
+
+	switch {
+	case result.Manifest != nil:
 		c.lastHeadID = result.Manifest.ID
 		c.lastGeneration = result.Manifest.Generation
 		c.lastManifestID = result.Manifest.ID
+
+	case haveHead:
+		c.lastHeadID = head.ID
+		c.lastGeneration = head.Generation
+		c.lastManifestID = head.ID
 	}
 
 	c.reportHint(result.CompactHint)
@@ -327,14 +349,36 @@ func (c *watchCycle) run(ctx context.Context, trigger watcher.Trigger) error {
 	return nil
 }
 
+// rebuildMatcher re-reads the ignore file and --exclude-from files after a ReasonIgnoreFile
+// trigger, so an edit to them takes effect on the very next scan and the very next filesystem
+// event, instead of only after the daemon restarts.
+func (c *watchCycle) rebuildMatcher() {
+	matcher, err := c.global.buildMatcher(c.root)
+	if err != nil {
+		c.session.reporter.Warn("rebuilding the ignore matcher: " + err.Error())
+
+		return
+	}
+
+	c.session.matcher = matcher
+	c.watcher.SetMatcher(matcher)
+}
+
 // handleCycleError decides whether a failed cycle should stop the daemon.
 //
-// A conflict is the documented "someone else committed meanwhile" race, and an API failure is
-// presumed transient — both heal by simply trying again on the next trigger, and the retry is
+// A conflict is the documented "someone else committed meanwhile" race, an API failure is
+// presumed transient, and a cycle timeout is documented to bound one cycle, not the daemon
+// (SPEC.md) — all three heal by simply trying again on the next trigger, and the retry is
 // nearly free because packs are already uploaded and content-addressed. Everything else — a
 // bad flag, a corrupt container, a shutdown request, or a bug — is not something looping again
 // can fix, so it stops the daemon rather than retrying blindly.
 func (c *watchCycle) handleCycleError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		c.session.reporter.Warn(err.Error())
+
+		return nil
+	}
+
 	switch CodeFor(err) {
 	case CodeConflict, CodeAPI:
 		c.session.reporter.Warn(err.Error())

@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -107,6 +108,7 @@ type Watcher struct {
 	fsw      *fsnotify.Watcher
 	pollOnly bool
 	watched  map[string]bool
+	matcher  atomic.Pointer[scan.Matcher]
 
 	triggers chan Trigger
 	warn     func(string)
@@ -125,6 +127,7 @@ func New(opts Options) (*Watcher, error) {
 		triggers: make(chan Trigger),
 		warn:     opts.Warn,
 	}
+	w.matcher.Store(opts.Matcher)
 
 	if opts.PollOnly {
 		w.pollOnly = true
@@ -154,6 +157,12 @@ func New(opts Options) (*Watcher, error) {
 // processes triggers one at a time never has two cycles running together.
 func (w *Watcher) Triggers() <-chan Trigger {
 	return w.triggers
+}
+
+// SetMatcher swaps the matcher used to decide exclusions. Safe to call concurrently with Run,
+// so a caller can rebuild it after a ReasonIgnoreFile trigger without restarting the watcher.
+func (w *Watcher) SetMatcher(m *scan.Matcher) {
+	w.matcher.Store(m)
 }
 
 // Watched reports the directories currently under an OS watch, for diagnostics and tests. It
@@ -460,7 +469,9 @@ func (w *Watcher) excluded(rel string, isDir bool) bool {
 		}
 	}
 
-	return w.opts.Matcher != nil && w.opts.Matcher.Match(rel, isDir)
+	matcher := w.matcher.Load()
+
+	return matcher != nil && matcher.Match(rel, isDir)
 }
 
 func (w *Watcher) isIgnoreFile(absPath string) bool {

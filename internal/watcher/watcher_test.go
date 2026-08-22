@@ -154,6 +154,33 @@ func TestWatcherIgnoreFileEditProducesReasonIgnoreFile(t *testing.T) {
 	assert.Equal(t, ReasonIgnoreFile, trigger.Reason)
 }
 
+func TestWatcherSetMatcherRebuildsExclusions(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	w, triggers := startWatcher(t, Options{Root: root})
+
+	// Before SetMatcher, a new "build" directory is in scope: creating it produces a trigger.
+	require.NoError(t, os.Mkdir(filepath.Join(root, "build"), 0o755))
+
+	trigger := waitTrigger(t, triggers)
+	assert.Equal(t, ReasonChange, trigger.Reason)
+
+	matcher, err := scan.NewMatcher([]string{"/dist/"})
+	require.NoError(t, err)
+
+	w.SetMatcher(matcher)
+
+	// After SetMatcher, creating a newly-excluded directory must neither produce a trigger nor
+	// be added to the OS watch, without restarting the watcher.
+	require.NoError(t, os.Mkdir(filepath.Join(root, "dist"), 0o755))
+	assertNoTrigger(t, triggers, 300*time.Millisecond)
+
+	for _, watched := range w.Watched() {
+		assert.NotContains(t, watched, "dist", "an excluded directory must never be watched")
+	}
+}
+
 func TestWatcherPollOnlySkipsTheOSWatcherEntirely(t *testing.T) {
 	t.Parallel()
 
