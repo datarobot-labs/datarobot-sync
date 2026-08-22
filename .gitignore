@@ -11,4 +11,11 @@ coverage.txt
 
 # Local env
 .env
+
+# Agent ignores
 .claude/worktrees
+
+# Hugo docs site build output and module cache
+docs/public/
+docs/resources/
+docs/.hugo_build.lock

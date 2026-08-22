@@ -1,0 +1,54 @@
+baseURL = 'https://datarobot.github.io/golang-datarobot-filesync/'
+locale = 'en-us'
+title = 'dr-sync'
+theme = []
+
+# Site content lives directly under content/ (no i18n subfolders needed).
+defaultContentLanguage = 'en'
+disableLanguages = []
+
+enableGitInfo = true
+
+[module]
+  [[module.imports]]
+    path = 'github.com/imfing/hextra'
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
+  [markup.highlight]
+    noClasses = false
+
+[params]
+  description = 'rsync for the DataRobot Files API — dr-sync documentation.'
+  [params.theme]
+    default = 'dark'
+    displayToggle = true
+  [params.navbar]
+    displayTitle = true
+    displayLogo = false
+  [params.editURL]
+    enable = true
+    base = 'https://github.com/datarobot/golang-datarobot-filesync/edit/main/docs/content'
+  [params.footer]
+    displayCopyright = false
+    displayPoweredBy = true
+
+[[menu.main]]
+  name = 'Docs'
+  pageRef = '/docs'
+  weight = 1
+
+[[menu.main]]
+  name = 'Search'
+  weight = 2
+  [menu.main.params]
+    type = 'search'
+
+[[menu.main]]
+  name = 'GitHub'
+  url = 'https://github.com/datarobot/golang-datarobot-filesync'
+  weight = 3
+  [menu.main.params]
+    icon = 'github'
