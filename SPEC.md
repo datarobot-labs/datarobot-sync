@@ -381,6 +381,16 @@ its own orphaned lease as foreign and self-block for the full lease TTL. `Upload
 therefore takes an optional `ClientID`, and watch generates one client id for its entire
 lifetime rather than one per push.
 
+A stable id creates a second problem a fresh random one never could: `AcquireLease` used to
+start every `LeaseHolder` at sequence 0, so every call for the same client id wrote the same
+object name, `<clientId>-1.lock`. That is invisible while each cycle's `Release` runs before
+the next cycle's `AcquireLease` — but a cycle that dies mid-commit, or whose `Release` itself
+fails, leaves that name occupied, and `Overwrite: error` then rejects the very next cycle's
+lease outright (not a foreign-lease refusal — this client id is never foreign to itself — a
+collision with its own leftover). `AcquireLease` therefore seeds the new holder's sequence
+from the highest one already on record for that client id, so a resumed run always picks an
+unused name.
+
 ### Garbage and compaction
 
 Per pack, `liveBytes` = Σ sizes of members still referenced; `liveRatio` = that over

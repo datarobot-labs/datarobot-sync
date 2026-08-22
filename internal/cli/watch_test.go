@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -134,4 +135,20 @@ func TestMaybeCompactSkipsWithoutTheFlagOrUnderDryRun(t *testing.T) {
 
 	assert.NoError(t, cycle.maybeCompact(t.Context(), &syncer.UploadResult{DryRun: true}),
 		"--dry-run must skip compaction even when --compact was requested")
+}
+
+func TestWriterRefreshIntervalNeverProducesANonPositiveDuration(t *testing.T) {
+	t.Parallel()
+
+	for _, ttl := range []time.Duration{0, -time.Second, time.Nanosecond, 2 * time.Second} {
+		interval := writerRefreshInterval(ttl)
+		assert.Greaterf(t, interval, time.Duration(0), "ttl=%v must not floor-divide to zero", ttl)
+
+		// time.NewTicker panics on a non-positive duration; proving one can be built is the
+		// real assertion here, not just that the number is positive.
+		assert.NotPanics(t, func() {
+			ticker := time.NewTicker(interval)
+			ticker.Stop()
+		})
+	}
 }

@@ -22,13 +22,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
 	"github.com/datarobot/golang-datarobot-filesync/internal/scan"
 )
 
@@ -107,8 +107,12 @@ type Watcher struct {
 
 	fsw      *fsnotify.Watcher
 	pollOnly bool
-	watched  map[string]bool
-	matcher  atomic.Pointer[scan.Matcher]
+	// watchedMu guards watched: every mutation happens on the single goroutine Run starts, but
+	// Watched is documented as safe to call from another goroutine while Run is active, so its
+	// read needs the same lock.
+	watchedMu sync.Mutex
+	watched   map[string]bool
+	matcher   atomic.Pointer[scan.Matcher]
 
 	// havePushed and lastPushStart record the last trigger this Watcher actually delivered,
 	// of any Reason — Initial and Poll included. Both run() and loop() are the single
@@ -128,7 +132,7 @@ func New(opts Options) (*Watcher, error) {
 
 	w := &Watcher{
 		opts:     opts,
-		metaDir:  metaDirName(opts.MetaPrefix),
+		metaDir:  scan.MetaDirName(opts.MetaPrefix),
 		watched:  map[string]bool{},
 		triggers: make(chan Trigger),
 		warn:     opts.Warn,
@@ -172,8 +176,11 @@ func (w *Watcher) SetMatcher(m *scan.Matcher) {
 }
 
 // Watched reports the directories currently under an OS watch, for diagnostics and tests. It
-// is empty in poll-only mode.
+// is empty in poll-only mode. Safe to call concurrently with Run.
 func (w *Watcher) Watched() []string {
+	w.watchedMu.Lock()
+	defer w.watchedMu.Unlock()
+
 	names := make([]string, 0, len(w.watched))
 	for name := range w.watched {
 		names = append(names, name)
@@ -232,14 +239,20 @@ func (w *Watcher) loop(ctx context.Context) error {
 
 		case err, ok := <-errs:
 			errs = w.onWatchError(err, ok, errs)
+			poll = w.ensurePoll(poll)
 
 		case <-tickerChan(poll):
 			if err := w.firePoll(ctx); err != nil {
 				return err
 			}
 
+			// firePoll can move lastPushStart, which moves the floor a pending debounced
+			// batch is waiting on; re-arm against the new deadline so a stale, earlier one
+			// does not fire (or leaves the timer permanently disarmed when it does).
+			resetTimer(timer, debounce.Deadline(w.lastPushStart, w.havePushed))
+
 		case <-timer.C:
-			if err := w.fireDebounced(ctx, debounce); err != nil {
+			if err := w.fireDebounced(ctx, debounce, timer); err != nil {
 				return err
 			}
 		}
@@ -271,9 +284,20 @@ func (w *Watcher) onEvent(event fsnotify.Event, ok bool, events <-chan fsnotify.
 
 // onWatchError reports an OS watcher error and returns the channel to keep selecting on, nil
 // once it has closed.
+//
+// A resource-exhaustion error can arrive here asynchronously — kqueue auto-watching a newly
+// created file inside an already-watched directory, for one — not only synchronously from
+// addWatch's own fsw.Add call, so it degrades to poll-only exactly the same way that does.
 func (w *Watcher) onWatchError(err error, ok bool, errs <-chan error) <-chan error {
 	if !ok {
 		return nil
+	}
+
+	if isResourceExhausted(err) {
+		w.warnResourceExhausted(err)
+		w.pollOnly = true
+
+		return errs
 	}
 
 	w.warnf("watch error: %v", err)
@@ -293,9 +317,16 @@ func (w *Watcher) firePoll(ctx context.Context) error {
 
 // fireDebounced sends a coalesced batch once it is ready. A non-nil return means the caller
 // should stop: ctx was done while sending.
-func (w *Watcher) fireDebounced(ctx context.Context, debounce *debouncer) error {
+//
+// The timer having fired does not mean Ready still holds: something else — a poll delivered in
+// between arming and firing, say — can have moved the floor out from under this exact deadline.
+// Re-arming against the recomputed one on that path is what keeps the batch from getting stuck
+// forever with a stopped timer and nothing left to wake it but a fresh filesystem event.
+func (w *Watcher) fireDebounced(ctx context.Context, debounce *debouncer, timer *time.Timer) error {
 	now := time.Now()
 	if !debounce.Ready(now, w.lastPushStart, w.havePushed) {
+		resetTimer(timer, debounce.Deadline(w.lastPushStart, w.havePushed))
+
 		return nil
 	}
 
@@ -418,7 +449,7 @@ func (w *Watcher) handleEvent(event fsnotify.Event, debounce *debouncer) {
 	}
 
 	if event.Op.Has(fsnotify.Remove) || event.Op.Has(fsnotify.Rename) {
-		delete(w.watched, event.Name)
+		w.unmarkWatched(event.Name)
 	}
 
 	if event.Op.Has(fsnotify.Create) {
@@ -488,7 +519,7 @@ func (w *Watcher) watchTree(dir string) error {
 // addWatch adds one directory watch, degrading to poll-only for the rest of the run if the OS
 // has run out of watch descriptors rather than failing the whole daemon.
 func (w *Watcher) addWatch(path string) error {
-	if w.pollOnly || w.watched[path] {
+	if w.pollOnly || w.isWatched(path) {
 		return nil
 	}
 
@@ -503,9 +534,32 @@ func (w *Watcher) addWatch(path string) error {
 		return fmt.Errorf("watching %s: %w", path, err)
 	}
 
-	w.watched[path] = true
+	w.markWatched(path)
 
 	return nil
+}
+
+// isWatched and markWatched, along with the delete in handleEvent, are the only places watched
+// is touched — all guarded by watchedMu so Watched can read it from another goroutine.
+func (w *Watcher) isWatched(path string) bool {
+	w.watchedMu.Lock()
+	defer w.watchedMu.Unlock()
+
+	return w.watched[path]
+}
+
+func (w *Watcher) markWatched(path string) {
+	w.watchedMu.Lock()
+	defer w.watchedMu.Unlock()
+
+	w.watched[path] = true
+}
+
+func (w *Watcher) unmarkWatched(path string) {
+	w.watchedMu.Lock()
+	defer w.watchedMu.Unlock()
+
+	delete(w.watched, path)
 }
 
 // excluded applies the same rules a scan does: dr-sync's own state and the download scratch
@@ -559,15 +613,4 @@ func (w *Watcher) warnResourceExhausted(err error) {
 		"(sysctl fs.inotify.max_user_watches=124983), on macOS/BSD raise the open-file limit "+
 		"(ulimit -n); falling back to periodic polling. Pass --poll-only to skip straight to "+
 		"polling next time.", err)
-}
-
-// metaDirName returns the reserved directory name without its trailing slash, mirroring how a
-// scan decides what its own state directory is called.
-func metaDirName(metaPrefix string) string {
-	trimmed := strings.TrimSuffix(metaPrefix, "/")
-	if trimmed == "" {
-		return strings.TrimSuffix(manifest.DefaultMetaPrefix, "/")
-	}
-
-	return trimmed
 }

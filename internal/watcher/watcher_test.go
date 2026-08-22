@@ -10,6 +10,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -181,6 +182,32 @@ func TestWatcherSetMatcherRebuildsExclusions(t *testing.T) {
 	}
 }
 
+func TestFireDebouncedRearmsOnAStaleDeadline(t *testing.T) {
+	t.Parallel()
+
+	// A pending batch whose only reason to wait is the --min-interval floor, not the debounce
+	// quiet period, so Ready reports false immediately here — exactly what a stale timer
+	// firing after the floor moved later would see.
+	debounce := newDebouncer(time.Millisecond, time.Hour)
+	debounce.Event(time.Now(), "a.txt", false)
+
+	w := &Watcher{
+		triggers:      make(chan Trigger),
+		lastPushStart: time.Now(),
+		havePushed:    true,
+	}
+
+	timer := time.NewTimer(time.Hour)
+	require.True(t, timer.Stop())
+
+	require.NoError(t, w.fireDebounced(t.Context(), debounce, timer))
+
+	// The batch is still pending — Ready is false — but the timer must have been re-armed
+	// against the recomputed deadline rather than left dead; otherwise nothing but a fresh
+	// filesystem event would ever wake this batch again.
+	assert.True(t, timer.Stop(), "a not-ready fireDebounced must still leave the timer armed")
+}
+
 func TestWatcherMinIntervalCountsTheInitialTrigger(t *testing.T) {
 	t.Parallel()
 
@@ -301,4 +328,49 @@ func TestEnsurePollStartsATickerOnceExhaustionFlipsPollOnly(t *testing.T) {
 	defer poll.Stop()
 
 	assert.Same(t, poll, w.ensurePoll(poll), "an existing ticker must never be replaced")
+}
+
+func TestOnWatchErrorDegradesToPollOnlyOnResourceExhaustion(t *testing.T) {
+	t.Parallel()
+
+	w := &Watcher{warn: func(string) {}}
+	errs := make(chan error)
+
+	returned := w.onWatchError(syscall.EMFILE, true, errs)
+
+	assert.True(t, w.pollOnly,
+		"an async fsnotify error (e.g. kqueue's per-file auto-watch) must degrade exactly like addWatch's synchronous one")
+	assert.Equal(t, (<-chan error)(errs), returned, "the channel must stay open for further errors")
+}
+
+func TestOnWatchErrorClosedChannelReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	w := &Watcher{warn: func(string) {}}
+
+	assert.Nil(t, w.onWatchError(nil, false, make(chan error)))
+	assert.False(t, w.pollOnly, "a closed channel is not itself a resource-exhaustion signal")
+}
+
+func TestWatchedIsSafeForConcurrentAccess(t *testing.T) {
+	t.Parallel()
+
+	w := &Watcher{watched: map[string]bool{}}
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		for range 1000 {
+			w.markWatched("path")
+			w.unmarkWatched("path")
+		}
+	}()
+
+	for range 1000 {
+		_ = w.Watched()
+	}
+
+	<-done
 }

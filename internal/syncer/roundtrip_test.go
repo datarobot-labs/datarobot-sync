@@ -403,6 +403,37 @@ func TestSecondWriterIsRefusedWhileALeaseIsHeld(t *testing.T) {
 	require.NoError(t, holder.Release(context.Background()))
 }
 
+// A stable ClientID reused across many AcquireLease calls (watch's whole point) must not try
+// to recreate the exact lock name an earlier, unreleased call already holds — Overwrite: error
+// would otherwise reject that commit outright, exactly as if it crashed mid-push or Release
+// itself failed.
+func TestStableClientIDDoesNotCollideWithItsOwnOrphanedLease(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+
+	state, err := h.store.ReadState(context.Background())
+	require.NoError(t, err)
+
+	orphan, err := syncer.AcquireLease(context.Background(), h.store, state, "watch-client", time.Hour, false)
+	require.NoError(t, err)
+
+	// orphan is deliberately never released, simulating a crashed cycle or a Release call
+	// that itself failed.
+	state, err = h.store.ReadState(context.Background())
+	require.NoError(t, err)
+
+	next, err := syncer.AcquireLease(context.Background(), h.store, state, "watch-client", time.Hour, false)
+	require.NoError(t, err, "a stable ClientID must not collide with its own orphaned lease object")
+
+	state, err = h.store.ReadState(context.Background())
+	require.NoError(t, err)
+	assert.Len(t, state.Leases, 2, "both the orphan and the new lease must exist as distinct objects")
+
+	require.NoError(t, orphan.Release(context.Background()))
+	require.NoError(t, next.Release(context.Background()))
+}
+
 // An expired lease must not block anyone.
 func TestExpiredLeaseIsIgnored(t *testing.T) {
 	t.Parallel()

@@ -246,13 +246,18 @@ func (c *watchCycle) refreshWriter(ctx context.Context, registration *syncer.Wri
 }
 
 // writerRefreshInterval is a third of the TTL, so a registration is renewed well before it
-// could lapse even if one refresh is delayed.
+// could lapse even if one refresh is delayed. Floored at one second: a --writer-ttl under
+// three seconds would otherwise floor-divide to zero, and time.NewTicker(0) panics.
 func writerRefreshInterval(ttl time.Duration) time.Duration {
 	if ttl <= 0 {
 		ttl = syncer.DefaultWriterTTL
 	}
 
-	return ttl / 3
+	if interval := ttl / 3; interval >= time.Second {
+		return interval
+	}
+
+	return time.Second
 }
 
 // newOptionalTicker returns nil for a non-positive interval, so the feature it drives can be
