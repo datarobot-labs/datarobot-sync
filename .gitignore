@@ -11,3 +11,4 @@ coverage.txt
 
 # Local env
 .env
+.claude/worktrees
