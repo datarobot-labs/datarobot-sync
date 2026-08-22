@@ -69,6 +69,33 @@ func TestWriterRefreshReplacesThePreviousEntry(t *testing.T) {
 	assert.Equal(t, "0000000042-deadbeef", writer.LastManifestID)
 }
 
+// A refresh heartbeat updates RefreshedAt but must never reset StartedAt: peers use the gap
+// between the two to tell how long this process has been running versus how current it is.
+func TestWriterRefreshPreservesStartedAt(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+
+	registration, err := syncer.RegisterWriter(context.Background(), h.store, "abc", "watch", "/root", time.Minute)
+	require.NoError(t, err)
+
+	state, err := h.store.ReadState(context.Background())
+	require.NoError(t, err)
+	require.Len(t, state.Writers, 1)
+	startedAt := state.Writers[0].StartedAt
+
+	require.NoError(t, registration.Refresh(context.Background(), 1, "0000000001-deadbeef"))
+
+	state, err = h.store.ReadState(context.Background())
+	require.NoError(t, err)
+	require.Len(t, state.Writers, 1)
+
+	assert.Equal(t, startedAt, state.Writers[0].StartedAt,
+		"a refresh must not reset when this process started")
+	assert.NotEqual(t, startedAt, state.Writers[0].RefreshedAt,
+		"a refresh must still update when this process last touched the registration")
+}
+
 // ForeignWriters must exclude the caller's own registration and anything expired, mirroring
 // ForeignLeases exactly.
 func TestForeignWritersExcludesSelfAndExpired(t *testing.T) {

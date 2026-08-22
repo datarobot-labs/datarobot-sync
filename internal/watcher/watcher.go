@@ -212,10 +212,12 @@ func (w *Watcher) loop(ctx context.Context) error {
 	timer := newStoppedTimer()
 	defer timer.Stop()
 
-	poll := newOptionalTicker(w.opts.PollInterval)
-	if poll != nil {
-		defer poll.Stop()
-	}
+	poll := newOptionalTicker(w.pollInterval())
+	defer func() {
+		if poll != nil {
+			poll.Stop()
+		}
+	}()
 
 	events, errs := w.eventChannels()
 
@@ -226,6 +228,7 @@ func (w *Watcher) loop(ctx context.Context) error {
 
 		case event, ok := <-events:
 			events = w.onEvent(event, ok, events, debounce, timer)
+			poll = w.ensurePoll(poll)
 
 		case err, ok := <-errs:
 			errs = w.onWatchError(err, ok, errs)
@@ -301,6 +304,38 @@ func (w *Watcher) fireDebounced(ctx context.Context, debounce *debouncer) error 
 	}
 
 	return ctx.Err()
+}
+
+// pollInterval is the safety-net ticker period loop should use.
+//
+// A resource-exhaustion fallback (New's fsnotify.NewWatcher failing, or addWatch losing a watch
+// descriptor mid-run) sets pollOnly without the caller ever having asked for --poll-only, and
+// the warning it prints promises "falling back to periodic polling" regardless of what
+// --poll-interval was set to. Honoring that promise even when --poll-interval was left at its
+// 0 "trust the OS watcher" default is the whole point of this override; an explicit
+// --poll-only combined with --poll-interval 0 is a deliberate fully-inert request instead, and
+// is left alone.
+func (w *Watcher) pollInterval() time.Duration {
+	if w.opts.PollInterval > 0 {
+		return w.opts.PollInterval
+	}
+
+	if w.pollOnly && !w.opts.PollOnly {
+		return DefaultPollInterval
+	}
+
+	return 0
+}
+
+// ensurePoll starts the safety-net ticker the moment resource exhaustion switches the watcher
+// into poll-only mid-run, for the case loop started with no ticker at all because
+// --poll-interval was 0 and nothing had failed yet.
+func (w *Watcher) ensurePoll(poll *time.Ticker) *time.Ticker {
+	if poll != nil {
+		return poll
+	}
+
+	return newOptionalTicker(w.pollInterval())
 }
 
 // tickerChan returns t.C, or a nil channel (which blocks forever in a select) when t is nil.

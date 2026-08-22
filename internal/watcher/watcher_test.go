@@ -259,3 +259,46 @@ func TestWatcherPollOnlySkipsTheOSWatcherEntirely(t *testing.T) {
 	poll := waitTrigger(t, w.Triggers())
 	assert.Equal(t, ReasonPoll, poll.Reason)
 }
+
+func TestPollIntervalFallsBackAfterResourceExhaustion(t *testing.T) {
+	t.Parallel()
+
+	w := &Watcher{opts: Options{PollInterval: 0}, pollOnly: true}
+
+	assert.Equal(t, DefaultPollInterval, w.pollInterval(),
+		"an unrequested fallback to poll-only must still poll, even with --poll-interval left at 0")
+}
+
+func TestPollIntervalRespectsAnExplicitPollOnlyWithNoInterval(t *testing.T) {
+	t.Parallel()
+
+	w := &Watcher{opts: Options{PollInterval: 0, PollOnly: true}, pollOnly: true}
+
+	assert.Zero(t, w.pollInterval(),
+		"--poll-only together with --poll-interval 0 is a deliberate fully-inert request")
+}
+
+func TestPollIntervalKeepsTheConfiguredValue(t *testing.T) {
+	t.Parallel()
+
+	w := &Watcher{opts: Options{PollInterval: 5 * time.Second}}
+
+	assert.Equal(t, 5*time.Second, w.pollInterval())
+}
+
+func TestEnsurePollStartsATickerOnceExhaustionFlipsPollOnly(t *testing.T) {
+	t.Parallel()
+
+	w := &Watcher{opts: Options{PollInterval: 0}}
+
+	assert.Nil(t, w.ensurePoll(nil), "no fallback is needed while the OS watcher is still working")
+
+	w.pollOnly = true
+
+	poll := w.ensurePoll(nil)
+	require.NotNil(t, poll, "resource exhaustion mid-run must start a ticker even if loop began with none")
+
+	defer poll.Stop()
+
+	assert.Same(t, poll, w.ensurePoll(poll), "an existing ticker must never be replaced")
+}

@@ -182,6 +182,9 @@ type WriterRegistration struct {
 	sequence int
 	// current is the object name of the entry this process most recently wrote.
 	current string
+	// startedAt is fixed on the first write, so StartedAt keeps reporting when this process
+	// began rather than resetting to now on every Refresh heartbeat.
+	startedAt time.Time
 }
 
 // RegisterWriter announces this process's presence on a container.
@@ -243,6 +246,9 @@ func (reg *WriterRegistration) write(ctx context.Context, lastGeneration int64, 
 	reg.sequence++
 
 	now := time.Now().UTC()
+	if reg.startedAt.IsZero() {
+		reg.startedAt = now
+	}
 
 	writer := Writer{
 		ClientID:       reg.clientID,
@@ -250,7 +256,7 @@ func (reg *WriterRegistration) write(ctx context.Context, lastGeneration int64, 
 		Version:        version.Short(),
 		Mode:           reg.mode,
 		Root:           reg.root,
-		StartedAt:      now.Format(time.RFC3339Nano),
+		StartedAt:      reg.startedAt.Format(time.RFC3339Nano),
 		RefreshedAt:    now.Format(time.RFC3339Nano),
 		ExpiresAt:      now.Add(reg.ttl).Format(time.RFC3339Nano),
 		Sequence:       reg.sequence,
