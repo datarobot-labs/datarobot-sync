@@ -612,6 +612,26 @@ func (a *fakeAPI) setObjectAge(containerID, name string, age time.Duration) {
 	container.objects[name] = object
 }
 
+// corruptObject overwrites an object's body with bytes that will fail to parse, so a test can
+// exercise the "unreadable object" path without any real transport failure.
+func (a *fakeAPI) corruptObject(containerID, name string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	container, ok := a.containers[containerID]
+	if !ok {
+		return
+	}
+
+	object, ok := container.objects[name]
+	if !ok {
+		return
+	}
+
+	object.content = []byte("not valid json")
+	container.objects[name] = object
+}
+
 func writeJSON(t *testing.T, w http.ResponseWriter, status int, body any) {
 	t.Helper()
 

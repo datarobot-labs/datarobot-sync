@@ -434,6 +434,61 @@ func TestStableClientIDDoesNotCollideWithItsOwnOrphanedLease(t *testing.T) {
 	require.NoError(t, next.Release(context.Background()))
 }
 
+// A lease whose body cannot be read must still expose the clientId and sequence recovered from
+// its object name: ownMaxSequence needs both to keep a stable watch ClientID from retrying the
+// exact lock name it already holds, exactly as it must for a readable orphan (see above).
+func TestStableClientIDDoesNotCollideWithAnUnreadableOwnLease(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+
+	state, err := h.store.ReadState(context.Background())
+	require.NoError(t, err)
+
+	orphan, err := syncer.AcquireLease(context.Background(), h.store, state, "watch-client", time.Hour, false)
+	require.NoError(t, err)
+
+	state, err = h.store.ReadState(context.Background())
+	require.NoError(t, err)
+
+	var objectName string
+
+	for _, lease := range state.Leases {
+		if lease.ClientID == "watch-client" {
+			objectName = lease.ObjectName
+		}
+	}
+
+	require.NotEmpty(t, objectName, "the orphan lease must be visible before it is corrupted")
+
+	h.api.corruptObject(h.containerID, objectName)
+
+	state, err = h.store.ReadState(context.Background())
+	require.NoError(t, err)
+
+	var (
+		corrupted syncer.Lease
+		found     bool
+	)
+
+	for _, lease := range state.Leases {
+		if lease.ObjectName == objectName {
+			corrupted, found = lease, true
+		}
+	}
+
+	require.True(t, found, "an unreadable lease must still be listed")
+	assert.Equal(t, "watch-client", corrupted.ClientID,
+		"the clientId parsed from the object name must survive an unreadable body")
+
+	next, err := syncer.AcquireLease(context.Background(), h.store, state, "watch-client", time.Hour, false)
+	require.NoError(t, err,
+		"a stable ClientID must not collide with its own lease even when that lease's body cannot be read")
+
+	require.NoError(t, orphan.Release(context.Background()))
+	require.NoError(t, next.Release(context.Background()))
+}
+
 // An expired lease must not block anyone.
 func TestExpiredLeaseIsIgnored(t *testing.T) {
 	t.Parallel()

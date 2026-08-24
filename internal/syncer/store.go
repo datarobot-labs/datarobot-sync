@@ -90,12 +90,15 @@ func (s *Store) ReadState(ctx context.Context) (*State, error) {
 			continue
 		}
 
-		if _, _, ok := parseLeaseObjectName(s.metaPrefix, entry.Name); ok {
+		if clientID, sequence, ok := parseLeaseObjectName(s.metaPrefix, entry.Name); ok {
 			lease, err := s.loadLease(ctx, entry.Name)
 			if err != nil {
 				// An unreadable lease must not block a run, but it must still be visible so
-				// garbage collection can clear it away. With no deadline it reads as expired.
-				lease = Lease{ObjectName: entry.Name}
+				// garbage collection can clear it away, and its clientId/sequence — already
+				// recovered from the object name — must survive too: ownMaxSequence needs them
+				// to keep a stable watch ClientID from retrying this same lock name. With no
+				// deadline it reads as expired.
+				lease = Lease{ObjectName: entry.Name, ClientID: clientID, Sequence: sequence}
 			}
 
 			state.Leases = append(state.Leases, lease)
