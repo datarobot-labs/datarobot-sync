@@ -120,6 +120,12 @@ type Watcher struct {
 	havePushed    bool
 	lastPushStart time.Time
 
+	// rewatch signals loop's goroutine to re-walk the tree after SetMatcher swaps the
+	// matcher: a directory excluded at startup was never added to the OS watcher, and
+	// un-excluding it later does not retroactively add one. Buffered so SetMatcher never
+	// blocks and back-to-back calls before loop drains it coalesce into a single re-walk.
+	rewatch chan struct{}
+
 	triggers chan Trigger
 	warn     func(string)
 }
@@ -134,6 +140,7 @@ func New(opts Options) (*Watcher, error) {
 		opts:     opts,
 		metaDir:  scan.MetaDirName(opts.MetaPrefix),
 		watched:  map[string]bool{},
+		rewatch:  make(chan struct{}, 1),
 		triggers: make(chan Trigger),
 		warn:     opts.Warn,
 	}
@@ -169,10 +176,19 @@ func (w *Watcher) Triggers() <-chan Trigger {
 	return w.triggers
 }
 
-// SetMatcher swaps the matcher used to decide exclusions. Safe to call concurrently with Run,
-// so a caller can rebuild it after a ReasonIgnoreFile trigger without restarting the watcher.
+// SetMatcher swaps the matcher used to decide exclusions and re-walks the tree, so a directory
+// excluded at startup — and so never added to the OS watcher — starts being watched once an
+// edit to the ignore file un-excludes it. Safe to call concurrently with Run, so a caller can
+// rebuild it after a ReasonIgnoreFile trigger without restarting the watcher.
 func (w *Watcher) SetMatcher(m *scan.Matcher) {
 	w.matcher.Store(m)
+
+	select {
+	case w.rewatch <- struct{}{}:
+	default:
+		// Already one pending re-walk loop has not gotten to yet; a second request before
+		// that runs would just re-walk against the same, now-current matcher again.
+	}
 }
 
 // Watched reports the directories currently under an OS watch, for diagnostics and tests. It
@@ -219,44 +235,61 @@ func (w *Watcher) loop(ctx context.Context) error {
 	timer := newStoppedTimer()
 	defer timer.Stop()
 
-	poll := newOptionalTicker(w.pollInterval())
+	state := &loopState{poll: newOptionalTicker(w.pollInterval())}
 	defer func() {
-		if poll != nil {
-			poll.Stop()
+		if state.poll != nil {
+			state.poll.Stop()
 		}
 	}()
 
-	events, errs := w.eventChannels()
+	state.events, state.errs = w.eventChannels()
 
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-
-		case event, ok := <-events:
-			events = w.onEvent(event, ok, events, debounce, timer)
-			poll = w.ensurePoll(poll)
-
-		case err, ok := <-errs:
-			errs = w.onWatchError(err, ok, errs)
-			poll = w.ensurePoll(poll)
-
-		case <-tickerChan(poll):
-			if err := w.firePoll(ctx); err != nil {
-				return err
-			}
-
-			// firePoll can move lastPushStart, which moves the floor a pending debounced
-			// batch is waiting on; re-arm against the new deadline so a stale, earlier one
-			// does not fire (or leaves the timer permanently disarmed when it does).
-			resetTimer(timer, debounce.Deadline(w.lastPushStart, w.havePushed))
-
-		case <-timer.C:
-			if err := w.fireDebounced(ctx, debounce, timer); err != nil {
-				return err
-			}
+		stop, err := w.tick(ctx, debounce, timer, state)
+		if stop {
+			return err
 		}
 	}
+}
+
+// loopState is the set of loop-local values one tick can replace: the OS watcher's channels go
+// nil once closed, and the poll ticker can start mid-run once resource exhaustion needs it.
+type loopState struct {
+	events <-chan fsnotify.Event
+	errs   <-chan error
+	poll   *time.Ticker
+}
+
+// tick waits for and dispatches exactly one of the events loop selects on. stop reports
+// whether loop should return, with err as its result.
+func (w *Watcher) tick(ctx context.Context, debounce *debouncer, timer *time.Timer, state *loopState) (bool, error) {
+	select {
+	case <-ctx.Done():
+		return true, ctx.Err()
+
+	case event, ok := <-state.events:
+		state.events = w.onEvent(event, ok, state.events, debounce, timer)
+		state.poll = w.ensurePoll(state.poll)
+
+	case err, ok := <-state.errs:
+		state.errs = w.onWatchError(err, ok, state.errs)
+		state.poll = w.ensurePoll(state.poll)
+
+	case <-w.rewatch:
+		w.onRewatch()
+
+	case <-tickerChan(state.poll):
+		if err := w.firePoll(ctx, debounce, timer); err != nil {
+			return true, err
+		}
+
+	case <-timer.C:
+		if err := w.fireDebounced(ctx, debounce, timer); err != nil {
+			return true, err
+		}
+	}
+
+	return false, nil
 }
 
 // eventChannels returns the OS watcher's channels, or nils in poll-only mode so the
@@ -305,14 +338,32 @@ func (w *Watcher) onWatchError(err error, ok bool, errs <-chan error) <-chan err
 	return errs
 }
 
-// firePoll sends the periodic safety-net trigger. A non-nil return means the caller should
-// stop: ctx was done while sending.
-func (w *Watcher) firePoll(ctx context.Context) error {
-	if w.sendTrigger(ctx, Trigger{Reason: ReasonPoll}) {
-		return nil
+// onRewatch re-walks the tree after SetMatcher signals that it changed, so a directory
+// excluded at startup — and so never added to the OS watcher — gets watched once an
+// un-excluding edit reaches here. A no-op in poll-only mode, where addWatch would only walk
+// the whole tree to no-op on every directory.
+func (w *Watcher) onRewatch() {
+	if w.pollOnly {
+		return
 	}
 
-	return ctx.Err()
+	if err := w.watchTree(w.opts.Root); err != nil {
+		w.warnf("rewatching after the matcher changed: %v", err)
+	}
+}
+
+// firePoll sends the periodic safety-net trigger and, on success, re-arms the debounce timer:
+// sendTrigger can move lastPushStart, which moves the floor a pending debounced batch is
+// waiting on, so a stale, earlier deadline must not fire (or leave the timer permanently
+// disarmed when it does).
+func (w *Watcher) firePoll(ctx context.Context, debounce *debouncer, timer *time.Timer) error {
+	if !w.sendTrigger(ctx, Trigger{Reason: ReasonPoll}) {
+		return ctx.Err()
+	}
+
+	resetTimer(timer, debounce.Deadline(w.lastPushStart, w.havePushed))
+
+	return nil
 }
 
 // fireDebounced sends a coalesced batch once it is ready. A non-nil return means the caller

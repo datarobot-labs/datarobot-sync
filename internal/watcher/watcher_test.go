@@ -10,6 +10,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -180,6 +181,42 @@ func TestWatcherSetMatcherRebuildsExclusions(t *testing.T) {
 	for _, watched := range w.Watched() {
 		assert.NotContains(t, watched, "dist", "an excluded directory must never be watched")
 	}
+}
+
+func TestSetMatcherRewatchesADirectoryNoLongerExcluded(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "vendor"), 0o755))
+
+	excluding, err := scan.NewMatcher([]string{"/vendor/"})
+	require.NoError(t, err)
+
+	w, triggers := startWatcher(t, Options{Root: root, Matcher: excluding})
+
+	for _, watched := range w.Watched() {
+		assert.NotContains(t, watched, "vendor", "excluded at startup, so never added to the OS watch")
+	}
+
+	// Un-exclude vendor/ — exactly what rebuildMatcher does after a ReasonIgnoreFile trigger.
+	w.SetMatcher(nil)
+
+	require.Eventually(t, func() bool {
+		for _, watched := range w.Watched() {
+			if strings.Contains(watched, "vendor") {
+				return true
+			}
+		}
+
+		return false
+	}, testTimeout, 10*time.Millisecond,
+		"un-excluding a directory must add it to the OS watch, not just to future exclusion checks")
+
+	// And a change inside it must now actually produce a trigger, not wait for a poll.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "vendor", "new.go"), []byte("x"), 0o600))
+
+	trigger := waitTrigger(t, triggers)
+	assert.Equal(t, ReasonChange, trigger.Reason)
 }
 
 func TestFireDebouncedRearmsOnAStaleDeadline(t *testing.T) {
