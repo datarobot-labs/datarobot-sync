@@ -500,7 +500,7 @@ func (w *Watcher) handleEvent(event fsnotify.Event, debounce *debouncer) {
 	}
 
 	if event.Op.Has(fsnotify.Remove) || event.Op.Has(fsnotify.Rename) {
-		w.unmarkWatched(event.Name)
+		w.unmarkWatchedTree(event.Name)
 	}
 
 	if event.Op.Has(fsnotify.Create) {
@@ -611,6 +611,23 @@ func (w *Watcher) unmarkWatched(path string) {
 	defer w.watchedMu.Unlock()
 
 	delete(w.watched, path)
+}
+
+// unmarkWatchedTree drops path and every entry watchTree previously added beneath it. The OS
+// watch for a removed directory is already gone by the time this runs, so leaving nested
+// entries in watched would make addWatch believe they are still watched and skip re-adding
+// them if the same path is recreated.
+func (w *Watcher) unmarkWatchedTree(path string) {
+	w.watchedMu.Lock()
+	defer w.watchedMu.Unlock()
+
+	prefix := path + string(filepath.Separator)
+
+	for watched := range w.watched {
+		if watched == path || strings.HasPrefix(watched, prefix) {
+			delete(w.watched, watched)
+		}
+	}
 }
 
 // excluded applies the same rules a scan does: dr-sync's own state and the download scratch

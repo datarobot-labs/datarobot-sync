@@ -411,3 +411,27 @@ func TestWatchedIsSafeForConcurrentAccess(t *testing.T) {
 
 	<-done
 }
+
+func TestUnmarkWatchedTreeDropsNestedEntries(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(string(filepath.Separator), "root")
+	a := filepath.Join(root, "a")
+
+	w := &Watcher{watched: map[string]bool{
+		a:                            true,
+		filepath.Join(a, "b"):        true,
+		filepath.Join(a, "b", "c"):   true,
+		filepath.Join(root, "ab"):    true,
+		filepath.Join(root, "other"): true,
+	}}
+
+	w.unmarkWatchedTree(a)
+
+	assert.False(t, w.isWatched(a), "the removed directory itself must be dropped")
+	assert.False(t, w.isWatched(filepath.Join(a, "b")), "a directory nested under the removed one must be dropped")
+	assert.False(t, w.isWatched(filepath.Join(a, "b", "c")), "a grandchild of the removed directory must be dropped")
+	assert.True(t, w.isWatched(filepath.Join(root, "ab")),
+		"a sibling that merely shares a name prefix must not be treated as nested")
+	assert.True(t, w.isWatched(filepath.Join(root, "other")), "an unrelated entry must be left alone")
+}
