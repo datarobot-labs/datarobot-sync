@@ -61,6 +61,9 @@ type State struct {
 	// recognized from the listing, with no download and no re-upload.
 	Objects map[string]drapi.FileEntry
 	Leases  []Lease
+	// Writers is who else is resident on this container, from the writers registry. Advisory
+	// only, like Leases: there is nothing here that enforces anything.
+	Writers []Writer
 }
 
 // ReadState lists everything under the reserved prefix.
@@ -87,15 +90,31 @@ func (s *Store) ReadState(ctx context.Context) (*State, error) {
 			continue
 		}
 
-		if _, _, ok := parseLeaseObjectName(s.metaPrefix, entry.Name); ok {
+		if clientID, sequence, ok := parseLeaseObjectName(s.metaPrefix, entry.Name); ok {
 			lease, err := s.loadLease(ctx, entry.Name)
 			if err != nil {
 				// An unreadable lease must not block a run, but it must still be visible so
-				// garbage collection can clear it away. With no deadline it reads as expired.
-				lease = Lease{ObjectName: entry.Name}
+				// garbage collection can clear it away, and its clientId/sequence — already
+				// recovered from the object name — must survive too: ownMaxSequence needs them
+				// to keep a stable watch ClientID from retrying this same lock name. With no
+				// deadline it reads as expired.
+				lease = Lease{ObjectName: entry.Name, ClientID: clientID, Sequence: sequence}
 			}
 
 			state.Leases = append(state.Leases, lease)
+
+			continue
+		}
+
+		if _, _, ok := parseWriterObjectName(s.metaPrefix, entry.Name); ok {
+			writer, err := s.loadWriter(ctx, entry.Name)
+			if err != nil {
+				// Same reasoning as an unreadable lease: it must stay visible so the stale
+				// sweep can clear it, and with no deadline it reads as expired.
+				writer = Writer{ObjectName: entry.Name}
+			}
+
+			state.Writers = append(state.Writers, writer)
 		}
 	}
 

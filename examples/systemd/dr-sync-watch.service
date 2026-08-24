@@ -1,0 +1,20 @@
+[Unit]
+Description=dr-sync watch — keep %h/my-project mirrored to its container
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Edit both: the directory to mirror, and the container it mirrors to. DR_SYNC_CATALOG_ID is
+# not a credential, just the id `dr-sync init` printed, so it is fine to write it here.
+Environment=DR_SYNC_CATALOG_ID=REPLACE_WITH_YOUR_CONTAINER_ID
+ExecStart=/usr/local/bin/dr-sync watch %h/my-project --delete
+Restart=on-failure
+RestartSec=5
+
+# No endpoint or token here on purpose: running as a normal user service, %h/.config/datarobot
+# /drconfig.yaml (the same file `dr auth login` writes) resolves them exactly the way an
+# interactive shell would. See ../../docs/quickstart.md § Credentials.
+
+[Install]
+WantedBy=default.target

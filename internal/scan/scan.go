@@ -160,7 +160,7 @@ func collect(root string, opts Options) ([]candidate, []Skip, error) {
 	walker := &treeWalker{
 		root:    root,
 		opts:    opts,
-		metaDir: metaDirName(opts.MetaPrefix),
+		metaDir: MetaDirName(opts.MetaPrefix),
 	}
 
 	if err := filepath.WalkDir(root, walker.visit); err != nil {
@@ -241,8 +241,9 @@ func (w *treeWalker) skip(skip Skip) {
 	warn(w.opts, fmt.Sprintf("skipping %s: %s", skip.Path, skip.Reason))
 }
 
-// metaDirName returns the reserved directory name without its trailing slash.
-func metaDirName(metaPrefix string) string {
+// MetaDirName returns the reserved directory name without its trailing slash. A watcher needs
+// this too, to apply the same reserved-path exclusion a scan does — see Watcher's excluded.
+func MetaDirName(metaPrefix string) string {
 	trimmed := strings.TrimSuffix(metaPrefix, "/")
 	if trimmed == "" {
 		return strings.TrimSuffix(manifest.DefaultMetaPrefix, "/")

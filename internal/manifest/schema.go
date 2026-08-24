@@ -38,6 +38,7 @@ const (
 	manifestsDir = "manifests"
 	packsDir     = "packs"
 	locksDir     = "locks"
+	writersDir   = "writers"
 	readmeName   = "README.txt"
 )
 
@@ -244,6 +245,15 @@ func PacksPrefix(metaPrefix string) string {
 // LocksPrefix is the directory holding advisory leases, with a trailing slash.
 func LocksPrefix(metaPrefix string) string {
 	return path.Join(strings.TrimSuffix(metaPrefix, "/"), locksDir) + "/"
+}
+
+// WritersPrefix is the directory holding the resident-writer registry, with a trailing slash.
+//
+// Each writer owns a sequence-named object here, refreshed the same way a lease is: a new
+// object followed by deleting the previous one, never an overwrite. There is no single mutable
+// registry file because the API offers no compare-and-swap to make overwriting one safe.
+func WritersPrefix(metaPrefix string) string {
+	return path.Join(strings.TrimSuffix(metaPrefix, "/"), writersDir) + "/"
 }
 
 // ReadmePath is the human-readable note left in the container.

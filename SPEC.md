@@ -145,7 +145,8 @@ head is **derived**: list `.dr-sync/manifests/` and take the lexicographic max.
 .dr-sync/packs/p_9f2a1c8d3e4f5061.tar.xz             p_<sha256(blob)[0:16]>
 .dr-sync/packs/p_1b2c3d4e5f607182.tar.xz.000         sliced when compressed size exceeds
 .dr-sync/packs/p_1b2c3d4e5f607182.tar.xz.001         --slice-size
-.dr-sync/locks/<clientId>.lock                       advisory lease, 15 min TTL
+.dr-sync/locks/<clientId>-<seq>.lock                 advisory lease, 30 min TTL
+.dr-sync/writers/<clientId>-<seq>.json               resident-writer registry (see Watch)
 ```
 
 Manifest (xz-compressed JSON, camelCase to match the API wire format so `internal/drapi`
@@ -327,6 +328,69 @@ recognizes by content-addressed name and skips; anything never re-run is reaped 
    list. Re-running picks up exactly the remainder, because local truth is re-derived every
    time — this is where "no local state" pays for itself.
 
+### Watch
+
+`dr-sync watch` is a resident process that keeps a container mirroring a local tree,
+upload-only — it never pulls. It is deliberately not the FUSE mode; it is the groundwork
+for it: a stable per-process identity and a remote registry of who else is writing, so the
+eventual multi-writer case has somewhere to look rather than being bolted on later.
+
+**A filesystem event is a hint, never a source of truth.** dr-sync keeps no persistent
+local state (invariant 7), so every trigger — whether from the OS watcher or the periodic
+poll — re-walks and re-hashes the tree exactly as `upload` does under `--check=auto`. A
+missed inotify event, a kqueue watch-descriptor limit, or a network filesystem that never
+raises one at all cost latency, never correctness. `internal/watcher` owns this: it debounces
+a burst of events into one trigger (`--debounce`, 2 s), enforces a floor between the start of
+two pushes (`--min-interval`, 15 s) so a busy tree cannot mint a generation per keystroke, and
+runs a periodic rescan (`--poll-interval`, 60 s) as a backstop regardless of what the OS
+watcher did or didn't see.
+
+Unlike `upload`, **`--delete` defaults on**: watch exists to mirror, not to accrete.
+
+**The resident-writer registry** (`.dr-sync/writers/`) is what a "well-known metadata file"
+becomes once invariant 1 is taken seriously: nothing in the container is ever overwritten,
+and the API has no compare-and-swap, so a single mutable pointer file is exactly the bug
+invariant 1 exists to prevent. Instead each resident writer owns a sequence-named object,
+refreshed the same way a lease is — write the next sequence, delete the previous one — and
+the registry is the union of whatever is currently live. It costs nothing extra to read:
+`Store.ReadState` already lists every object under the meta prefix for the lease listing, so
+parsing the writers alongside it is free. Entries outside the pack/manifest reference graph
+are never touched by tier-1 GC's allowlist logic, so a stale one is swept explicitly
+(`StaleWriterNames`), on the same cadence as `--gc-interval`.
+
+**On a dirty remote — the head moved, or a fork was detected — watch suppresses `--delete`
+for that cycle and warns**, rather than deleting through it. Two mirroring writers each
+deleting the other's paths from the manifest every cycle is a real failure mode once a
+second writer exists (as FUSE will introduce), and it is cheap to avoid: content is never
+lost by holding a delete back for one cycle, only re-evaluated on the next. `--force`
+overrides.
+
+**GC does not run per push.** Tier-1 GC is the expensive tail of a commit — a full listing
+plus up to `--keep-generations` manifest downloads — and a daemon pushing every few seconds
+would pay that far more often than it needs to, for less benefit: many small pushes produce
+many *mostly*-live packs, which tier-1's `liveRatio == 0` rule cannot reclaim regardless of
+how often it runs. `watch` passes `NoGC` on every cycle and instead runs one
+`syncer.Collect` sweep on a timer (`--gc-interval`, 10 min, independent of any push) and once
+more on clean shutdown. A long watch session still accrues *sparse* packs that only
+`dr-sync compact` reclaims; the usual compaction hint still fires, rate-limited to once per
+sweep interval so it does not repeat every cycle.
+
+**A stable lease identity is required, not optional.** `Upload` used to mint a fresh random
+lease client id on every call; a daemon whose previous cycle died mid-commit would then see
+its own orphaned lease as foreign and self-block for the full lease TTL. `UploadOptions`
+therefore takes an optional `ClientID`, and watch generates one client id for its entire
+lifetime rather than one per push.
+
+A stable id creates a second problem a fresh random one never could: `AcquireLease` used to
+start every `LeaseHolder` at sequence 0, so every call for the same client id wrote the same
+object name, `<clientId>-1.lock`. That is invisible while each cycle's `Release` runs before
+the next cycle's `AcquireLease` — but a cycle that dies mid-commit, or whose `Release` itself
+fails, leaves that name occupied, and `Overwrite: error` then rejects the very next cycle's
+lease outright (not a foreign-lease refusal — this client id is never foreign to itself — a
+collision with its own leftover). `AcquireLease` therefore seeds the new holder's sequence
+from the highest one already on record for that client id, so a resumed run always picks an
+unused name.
+
 ### Garbage and compaction
 
 Per pack, `liveBytes` = Σ sizes of members still referenced; `liveRatio` = that over
@@ -345,6 +409,11 @@ Compact then verifies it is still the maximum generation before deleting anythin
 someone else committed concurrently, abort GC entirely (exit 4), because their manifest may
 reference packs we were about to delete. `dr-sync gc` is tier-1 only: no local walk, fast,
 scriptable in CI.
+
+A resident `watch` session changes the shape of the garbage, not the mechanism: many small
+pushes produce many *mostly*-live packs — tier 1's `liveRatio == 0` rule reclaims little of
+that — so dead weight accrues as sparse packs over a long session and wants an occasional
+`dr-sync compact`, exactly as the usual hint suggests.
 
 ### Concurrency: what is guaranteed, what is not
 
@@ -373,6 +442,10 @@ Explicitly rejected: `catalogVersionId` as a CAS token (nothing to attach it to)
 problem plus the tags-clearing footgun). Any description we write is display-only, e.g.
 `dr-sync gen 42 · 12043 files · 7.6 GiB`.
 
+The resident-writer registry `watch` maintains (`.dr-sync/writers/`) is advisory in exactly
+this sense — presence, not a lock — and changes none of the above: it lets one writer notice
+another and hold back a `--delete` for a cycle, nothing more.
+
 ### Two API details the client must get right
 
 - The 303 from `POST files/{id}/downloads/` must be followed **without** `Authorization`.
@@ -398,16 +471,24 @@ internal/scan/               walk, parallel SHA-256 pipeline, --check modes, NFC
 internal/packer/             pack planning, deterministic tar+xz+slice+sha build, scratch mgmt
 internal/extract/            needed-blob planning, slice-chained streaming with early abort
                              and Range resume, atomic apply
-internal/syncer/             the upload/download phase machines, classify, gc, compact, lease
+internal/syncer/             the upload/download phase machines, classify, gc, compact, lease,
+                             the resident-writer registry
+internal/watcher/            watch's debounce/coalesce state machine and OS filesystem watch
+                             management; a trigger is a hint, the re-scan is the truth
 internal/progress/           Reporter interface; tty / json / quiet renderers
 internal/version/            ldflags-injected version, commit, date
 ```
 
 Direct dependencies: `github.com/spf13/cobra` and `github.com/spf13/viper` for the command
 tree and configuration, `github.com/ulikunitz/xz v0.5.16` for compression,
-`golang.org/x/sync/errgroup`, `golang.org/x/text/unicode/norm`, and `golang.org/x/term`. Pin
-`ulikunitz/xz` exactly and check `WriterConfig` field names against the pinned version; that
-API has shifted across releases and it is the one moving target here.
+`github.com/fsnotify/fsnotify` for `watch`'s filesystem events, `golang.org/x/sync/errgroup`,
+`golang.org/x/text/unicode/norm`, and `golang.org/x/term`. Pin `ulikunitz/xz` exactly and check
+`WriterConfig` field names against the pinned version; that API has shifted across releases
+and it is the one moving target here. fsnotify was already pulled in transitively by viper, so
+using it directly adds no new module to the build — and it is the only watcher library
+available under `CGO_ENABLED=0` (`rjeczalik/notify` needs CGO for macOS FSEvents). It has no
+public recursive watch even in newer releases, so `internal/watcher` manages one watch per
+directory itself.
 
 **cobra and viper**, matching the `dr` CLI. cobra permutes arguments, so `upload ./dir --delete`
 works the way anyone would type it — the stdlib `flag` package stops at the first positional and
@@ -427,6 +508,7 @@ special case.
 dr-sync init                 [--name N] [--description D] [--tag T]...   → prints catalog id
 dr-sync upload   <path>
 dr-sync download <path>
+dr-sync watch    <path>      resident, upload-only, --delete defaults on
 dr-sync status   <path>      classify + plan, no writes (same as --dry-run, read-only)
 dr-sync ls                   [--prefix P] [--long] [--generation N]      manifest contents
 dr-sync inspect              [--packs]    generations, liveness, dead bytes, leases
@@ -456,6 +538,12 @@ Download adds `--delete`, `--delete-excluded`, `--prefix` (repeatable),
 `--generation`/`--manifest` (pull a retained older generation), `--parallel`,
 `--link-duration`, `--no-local-reuse`, `--preserve-special-modes`, `--allow-unsafe-links`,
 `--tmpdir` (must share the filesystem with root).
+
+Watch shares every upload flag — including `--timeout`, which bounds one cycle, not the
+daemon — but registers `--delete` with a default of `true` rather than `upload`'s `false`.
+It adds `--debounce` (2s), `--min-interval` (15s), `--poll-interval` (60s; `0` disables it),
+`--poll-only` (skip the OS watcher entirely), `--gc-interval` (10m; `0` disables it), and
+`--writer-ttl` (5m, how long its writers-registry entry is honoured).
 
 **Exit codes:** 0 success (including nothing to do) · 1 internal · 2 usage/config/precondition
 · 3 API or auth failure · 4 conflict (foreign lease, generation moved, fork) · 5 integrity

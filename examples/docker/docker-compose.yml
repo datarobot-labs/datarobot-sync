@@ -1,0 +1,51 @@
+# Two unattended shapes, side by side:
+#
+#   watch        a resident mirror. Docker's own restart policy is the supervisor; no cron,
+#                no custom image, just the published binary run with a different argv.
+#   cron-backup  a periodic snapshot push, every 15 minutes per ./crontab. This one needs a
+#                shell and cron daemon, so it is built from Dockerfile.cron on top of the same
+#                published binary rather than running it directly.
+#
+# The mount target is /tmp/data, not /data: a DataRobot execution environment's container
+# only has /tmp writable, and mounting there means this compose file works unmodified whether
+# it runs on your own infra or inside one of those. Point SYNC_PATH at whatever directory you
+# actually want mirrored before running this.
+#
+#   docker compose up -d
+#   docker compose logs -f watch
+
+services:
+  watch:
+    image: ghcr.io/datarobot/dr-sync:latest
+    command: ["watch", "/tmp/data", "--delete", "--verbose"]
+    restart: unless-stopped
+    volumes:
+      - ${SYNC_PATH:-./data}:/tmp/data
+    environment:
+      - DATAROBOT_ENDPOINT
+      - DATAROBOT_API_TOKEN
+      - DR_SYNC_CATALOG_ID
+
+  cron-backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.cron
+    restart: unless-stopped
+    volumes:
+      - ${SYNC_PATH:-./data}:/tmp/data:ro
+    environment:
+      - DATAROBOT_ENDPOINT
+      - DATAROBOT_API_TOKEN
+      - DR_SYNC_CATALOG_ID
+
+# Credentials can come from the environment (shown above — set them in the shell running
+# `docker compose`, or in a .env file next to this one) or from a mounted config file instead,
+# which keeps the token out of `docker inspect` entirely. Both images run as chainguard's
+# nonroot user (uid 65532, $HOME=/home/nonroot), not root:
+#
+#   volumes:
+#     - ${SYNC_PATH:-./data}:/tmp/data
+#     - ~/.config/datarobot/drconfig.yaml:/home/nonroot/.config/datarobot/drconfig.yaml:ro
+#
+# and drop the `environment:` block. dr-sync's own config resolution finds it either way —
+# verified live against a real container as part of building this example.

@@ -172,13 +172,36 @@ func AcquireLease(ctx context.Context, store *Store, state *State, clientID stri
 		return nil, &LeaseHeldError{Leases: held}
 	}
 
-	holder := &LeaseHolder{store: store, clientID: clientID, ttl: ttl}
+	holder := &LeaseHolder{store: store, clientID: clientID, ttl: ttl, sequence: ownMaxSequence(state.Leases, clientID)}
 
 	if err := holder.write(ctx); err != nil {
 		return nil, err
 	}
 
 	return holder, nil
+}
+
+// ownMaxSequence returns the highest sequence number clientID has already written among
+// leases, or 0 if it has none.
+//
+// A fresh LeaseHolder starts from here rather than always at 0: a stable ClientID — watch's
+// whole point, per SPEC.md, is one identity for its entire lifetime rather than one per push —
+// means AcquireLease is called many times for the same clientID across a long run. Starting
+// every LeaseHolder at sequence 0 would make every one of those calls target the same object
+// name, clientId-1.lock; that is harmless while the previous call's Release ran, but a cycle
+// that crashed mid-commit or whose Release itself failed leaves that name occupied, and
+// Overwrite: error then rejects the next cycle's commit outright — not a foreign-lease refusal
+// (this clientID is never foreign to itself), but a collision with its own leftover.
+func ownMaxSequence(leases []Lease, clientID string) int {
+	highest := 0
+
+	for _, lease := range leases {
+		if lease.ClientID == clientID && lease.Sequence > highest {
+			highest = lease.Sequence
+		}
+	}
+
+	return highest
 }
 
 // Renew extends the lease by writing the next heartbeat and dropping the previous one.

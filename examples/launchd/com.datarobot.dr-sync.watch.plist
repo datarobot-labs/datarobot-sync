@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.datarobot.dr-sync.watch</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/dr-sync</string>
+        <string>watch</string>
+        <string>REPLACE_WITH_THE_DIRECTORY_TO_MIRROR</string>
+        <string>--delete</string>
+    </array>
+
+    <!-- DR_SYNC_CATALOG_ID is not a credential, just the id `dr-sync init` printed, so it is
+         fine to write it here. No endpoint or token: launchd runs this as your own user, so
+         dr-sync finds ~/.config/datarobot/drconfig.yaml (the file `dr auth login` writes) on
+         its own — see ../../docs/quickstart.md § Credentials. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>DR_SYNC_CATALOG_ID</key>
+        <string>REPLACE_WITH_YOUR_CONTAINER_ID</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/dr-sync-watch.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/dr-sync-watch.log</string>
+</dict>
+</plist>

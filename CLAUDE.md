@@ -99,6 +99,16 @@ Run `task lint` after every change, before considering the work done.
   `~/.config/datarobot/plugins/sync/` (`task plugin:package`, then
   `dr plugin install sync --file dist/sync-<version>.tar.xz`).
 - We never set `useArchiveContents=True`: DataRobot's intake cannot unpack xz.
+- `fsnotify` has no public recursive watch, even in releases newer than the one pinned here —
+  the recursive code path exists but is internal, exercised only by fsnotify's own tests.
+  `internal/watcher` adds one watch per directory itself.
+- A watch-descriptor limit does not surface as anything that names itself: inotify exhaustion
+  is `ENOSPC` ("no space left on device"), kqueue exhaustion is `EMFILE` ("too many open
+  files"), because kqueue needs one fd per watched path. `internal/watcher` checks for both
+  with `errors.Is` and degrades to polling rather than dying.
+- `rjeczalik/notify` needs CGO for macOS FSEvents, which rules it out under this project's
+  `CGO_ENABLED=0` release build. fsnotify is pure Go on every backend, and was already in the
+  module graph as an indirect dependency of viper.
 
 ## Structure
 

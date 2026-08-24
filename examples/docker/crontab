@@ -1,0 +1,1 @@
+*/15 * * * * dr-sync upload --delete /tmp/data
