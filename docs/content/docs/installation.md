@@ -3,6 +3,12 @@ title = 'Installation'
 weight = 2
 +++
 
+## Requirements
+
+Works against DataRobot 11.4 and later. The Files API's `allFiles` listing endpoint gained a
+`recursive` parameter in 11.7; against an older instance dr-sync detects the resulting 400 and
+falls back to the equivalent request automatically, no configuration needed.
+
 ## As a `dr` plugin
 
 From a release or a local archive:

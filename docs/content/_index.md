@@ -7,6 +7,10 @@ layout = 'hextra-home'
   <div class="hx:w-2 hx:h-2 hx:rounded-full hx:bg-primary-400"></div>
   <span>Also a `dr` CLI plugin</span>
 {{< /hextra/hero-badge >}}
+{{< hextra/hero-badge >}}
+  <div class="hx:w-2 hx:h-2 hx:rounded-full hx:bg-primary-400"></div>
+  <span>Works with DataRobot 11.4+</span>
+{{< /hextra/hero-badge >}}
 
 <div class="hx:mt-6 hx:mb-6">
 {{< hextra/hero-headline >}}

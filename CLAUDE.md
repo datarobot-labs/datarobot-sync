@@ -74,6 +74,12 @@ Run `task lint` after every change, before considering the work done.
 - Wire JSON is camelCase in both directions. `null` fields are omitted, not sent as null.
 - `useArchiveContents` is `"True"`/`"False"` (Python-capitalized) in multipart form bodies,
   while `recursive` is `"true"`/`"false"` in query strings. Do not unify them.
+- `recursive` on `GET files/{id}/allFiles/` did not exist before DataRobot 11.7 (added
+  2025-12-22); an older instance's strict validator 400s with `"recursive is not allowed
+  key"`. Before that param existed the endpoint was already unconditionally what
+  `recursive=true` asks for today — flat, no folder synthesis — so `EachFile` in
+  `internal/drapi/files.go` retries once with the param omitted on that specific 400 and gets
+  identical results. Every other endpoint dr-sync uses predates 11.4 by at least one release.
 - `DELETE files/{id}/allFiles/` takes a **JSON request body**.
 - `POST files/{id}/downloads/` returns **303** to a presigned URL; `POST files/{id}/links/`
   returns them in batch and fails the whole batch if any single name is missing.
