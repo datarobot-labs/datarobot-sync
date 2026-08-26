@@ -100,6 +100,62 @@ func TestEachFileStopsOnVisitError(t *testing.T) {
 	assert.Equal(t, 1, seen)
 }
 
+// A DataRobot release older than the one that added `recursive` to allFiles/ rejects it as an
+// unrecognized key. The pre-existing behavior of that endpoint was already a flat listing, so
+// dropping the param and retrying once must reproduce the same result.
+func TestEachFileFallsBackWhenRecursiveParamUnsupported(t *testing.T) {
+	t.Parallel()
+
+	var requests []map[string]string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := map[string]string{}
+		for key := range r.URL.Query() {
+			query[key] = r.URL.Query().Get(key)
+		}
+
+		requests = append(requests, query)
+
+		if _, ok := query["recursive"]; ok {
+			respond(t, w, http.StatusBadRequest, `{"message":{"recursive":"recursive is not allowed key"}}`)
+
+			return
+		}
+
+		respondOK(t, w, `{"count":1,"next":null,"data":[{"fileName":"a.txt","fileType":"txt"}]}`)
+	}))
+	defer srv.Close()
+
+	entries, err := newTestClient(t, srv).ListFiles(context.Background(), "abc", ListOptions{})
+	require.NoError(t, err)
+
+	require.Len(t, requests, 2, "must retry exactly once, without recursive")
+	assert.Contains(t, requests[0], "recursive")
+	assert.NotContains(t, requests[1], "recursive")
+	require.Len(t, entries, 1)
+	assert.Equal(t, "a.txt", entries[0].Name)
+}
+
+// A 400 for an unrelated reason must not be mistaken for the recursive-param fallback trigger.
+func TestEachFileDoesNotRetryOnUnrelatedBadRequest(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+
+		respond(t, w, http.StatusBadRequest, `{"message":{"prefix":"prefix must end with a forward slash"}}`)
+	}))
+	defer srv.Close()
+
+	_, err := newTestClient(t, srv).ListFiles(context.Background(), "abc", ListOptions{})
+
+	require.Error(t, err)
+	assert.Equal(t, 1, calls, "an unrelated 400 must not be retried")
+	assert.Contains(t, err.Error(), "prefix must end with a forward slash")
+}
+
 // DELETE with a JSON request body is unusual enough that a client can easily drop it.
 func TestDeletePathsSendsJSONBodyOnDelete(t *testing.T) {
 	t.Parallel()

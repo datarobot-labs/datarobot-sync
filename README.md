@@ -22,6 +22,12 @@ dr-sync upload   ./my-project         # push, sending only what changed
 dr-sync download ./my-project         # pull, fetching only what is missing
 ```
 
+## Requirements
+
+Works against DataRobot 11.4 and later. The Files API's `allFiles` listing endpoint gained a
+`recursive` parameter in 11.7; against an older instance dr-sync detects the resulting 400 and
+falls back to the equivalent request automatically, no configuration needed.
+
 ## Why it is fast
 
 - **Nothing unchanged is re-sent.** The Files API records a SHA-256 for every stored object, so
