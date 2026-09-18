@@ -14,10 +14,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
 	"github.com/datarobot/golang-datarobot-filesync/internal/scan"
 )
+
+// buildSeq disambiguates concurrent Build calls in the same process: upload.go's buildPacks
+// runs several at once, and os.Getpid() alone is identical across all of them.
+var buildSeq atomic.Int64
 
 // Blob is one piece of content to store.
 type Blob struct {
@@ -112,7 +117,7 @@ func Build(ctx context.Context, blobs []Blob, opts BuildOptions) (*Built, error)
 	}
 
 	// A provisional name, because the real one is the digest of bytes that do not exist yet.
-	provisional := fmt.Sprintf("building-%d", os.Getpid())
+	provisional := fmt.Sprintf("building-%d-%d", os.Getpid(), buildSeq.Add(1))
 
 	slices := newSliceWriter(opts.ScratchDir, provisional, opts.SliceSize)
 
