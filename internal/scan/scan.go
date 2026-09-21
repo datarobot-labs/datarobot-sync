@@ -129,7 +129,7 @@ func Walk(ctx context.Context, opts Options) (*Result, error) {
 		Skipped:    skipped,
 	}
 
-	if err := hashAll(ctx, root, candidates, opts, result); err != nil {
+	if err := hashAll(ctx, candidates, opts, result); err != nil {
 		return nil, err
 	}
 
@@ -348,7 +348,7 @@ func DefaultJobs() int {
 }
 
 // hashAll fills in digests for the candidate files, in parallel.
-func hashAll(ctx context.Context, root string, candidates []candidate, opts Options, result *Result) error {
+func hashAll(ctx context.Context, candidates []candidate, opts Options, result *Result) error {
 	jobs := opts.Jobs
 	if jobs <= 0 {
 		jobs = DefaultJobs()
@@ -388,13 +388,13 @@ func hashAll(ctx context.Context, root string, candidates []candidate, opts Opti
 	}
 
 	result.Entries = entries
-	tally(root, entries, reused, hashedSizes, result)
+	tally(candidates, entries, reused, hashedSizes, result)
 
 	return nil
 }
 
 // tally builds the digest indexes and the hashed/reused counters.
-func tally(root string, entries []manifest.Entry, reused []bool, hashedSizes []int64, result *Result) {
+func tally(candidates []candidate, entries []manifest.Entry, reused []bool, hashedSizes []int64, result *Result) {
 	for i, entry := range entries {
 		if entry.Type != manifest.TypeFile || entry.SHA256 == "" {
 			continue
@@ -402,8 +402,12 @@ func tally(root string, entries []manifest.Entry, reused []bool, hashedSizes []i
 
 		result.BySHA[entry.SHA256] = append(result.BySHA[entry.SHA256], entry.Path)
 
+		// The walked absPath is used rather than reconstructing one from entry.Path: the
+		// manifest path is NFC-normalized, but the file may exist under an NFD name (common
+		// on macOS), and a filesystem that isn't itself normalization-insensitive will fail
+		// to open the reconstructed path even though the real file is right there.
 		if _, known := result.SourcePath[entry.SHA256]; !known {
-			result.SourcePath[entry.SHA256] = filepath.Join(root, Denormalize(entry.Path))
+			result.SourcePath[entry.SHA256] = candidates[i].absPath
 		}
 
 		if reused[i] {

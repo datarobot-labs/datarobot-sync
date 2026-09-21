@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
 )
@@ -102,6 +103,35 @@ func TestWalkIndexesDuplicateContentOnce(t *testing.T) {
 	assert.Equal(t, []string{"one/a.txt", "two/b.txt"}, result.BySHA[digest])
 	assert.NotEmpty(t, result.SourcePath[digest])
 	assert.Len(t, result.BySHA, 2, "two distinct contents across three files")
+}
+
+// A file named with NFD-decomposed Unicode (the form macOS's readdir returns for an accented
+// name) must still be readable through SourcePath. The manifest entry is NFC-normalized, but
+// SourcePath has to be the path the walker actually found the file at, not a reconstruction
+// through the normalized manifest path — that reconstruction only happens to work on a
+// filesystem that is itself normalization-insensitive.
+func TestWalkSourcePathSurvivesNFDFilename(t *testing.T) {
+	t.Parallel()
+
+	decomposed := norm.NFD.String("café.txt")
+	require.NotEqual(t, "café.txt", decomposed, "fixture must actually be NFD-decomposed")
+
+	root := t.TempDir()
+	full := filepath.Join(root, decomposed)
+	require.NoError(t, os.WriteFile(full, []byte("content"), 0o600))
+
+	result := walk(t, Options{Root: root})
+
+	entry, ok := result.ByPath["café.txt"]
+	require.True(t, ok, "the manifest path is NFC-normalized regardless of the on-disk form")
+
+	source, ok := result.SourcePath[entry.SHA256]
+	require.True(t, ok)
+	assert.Equal(t, full, source, "SourcePath must be the walked path, not one rebuilt from the normalized manifest path")
+
+	content, err := os.ReadFile(source)
+	require.NoError(t, err)
+	assert.Equal(t, "content", string(content))
 }
 
 // dr-sync's own state must not be swept into the sync, but a user's identically named nested
