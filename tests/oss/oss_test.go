@@ -30,8 +30,10 @@ const repoRoot = "../.."
 
 func read(t *testing.T, name string) string {
 	t.Helper()
+
 	data, err := os.ReadFile(filepath.Join(repoRoot, name))
 	require.NoError(t, err, name)
+
 	return string(data)
 }
 
@@ -63,15 +65,19 @@ func TestWorkflowActionsArePinnedToACommit(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join(repoRoot, ".github/workflows/*.y*ml"))
 	require.NoError(t, err)
 	require.NotEmpty(t, files)
+
 	pinned := regexp.MustCompile(`@[0-9a-f]{40}( |$)`)
+
 	for _, file := range files {
 		data, err := os.ReadFile(file)
 		require.NoError(t, err)
+
 		for _, line := range strings.Split(string(data), "\n") {
 			trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
 			if !strings.HasPrefix(trimmed, "uses: ") {
 				continue
 			}
+
 			require.Regexp(t, pinned, trimmed, "%s: %s", file, trimmed)
 		}
 	}
@@ -98,19 +104,24 @@ func TestDockerBaseImageIsPinnedByDigest(t *testing.T) {
 func TestNoSourceFileCarriesTheProprietaryHeader(t *testing.T) {
 	err := filepath.WalkDir(repoRoot, func(path string, entry fs.DirEntry, err error) error {
 		require.NoError(t, err)
+
 		if entry.IsDir() {
 			if entry.Name() == ".git" {
 				return filepath.SkipDir
 			}
+
 			return nil
 		}
+
 		if filepath.Ext(path) != ".go" || entry.Name() == "oss_test.go" {
 			return nil
 		}
+
 		data, err := os.ReadFile(path)
 		require.NoError(t, err)
 		require.Contains(t, string(data), "Licensed under the Apache License", path)
 		require.NotContains(t, string(data), "proprietary source code", path)
+
 		return nil
 	})
 	require.NoError(t, err)
