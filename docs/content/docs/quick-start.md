@@ -28,12 +28,12 @@ variables set at all**, credentials coming entirely from that file.
 
 ```sh
 $ dr-sync init --name "dr-sync-quickstart"
-create  container 6a88a0e0de792a9d144a69c9
+create  container 0123456789abcdef01234567
 seed    0000000000-e67a202c written
 done    container ready
-6a88a0e0de792a9d144a69c9
+0123456789abcdef01234567
 
-$ export DR_SYNC_CATALOG_ID=6a88a0e0de792a9d144a69c9
+$ export DR_SYNC_CATALOG_ID=0123456789abcdef01234567
 $ dr-sync upload ./my-project
 remote  empty container; this will be generation 0
 scan    142 entries  hashed 138 (4.2 MiB)  reused 0
