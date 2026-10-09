@@ -1,11 +1,11 @@
 <p align="center">
-  <a href="https://github.com/datarobot/datarobot-rysnc">
+  <a href="https://github.com/datarobot/golang-datarobot-filesync">
     <img src="https://af.datarobot.com/img/datarobot_logo.avif" width="600px" alt="DataRobot Logo"/>
   </a>
 </p>
 <h2 align="center">dr-sync: DataRobot rsync</h2>
 <p align="center">
-  <a href="[https://af.datarobot.com](https://verbose-adventure-nyozgq5.pages.github.io/)">
+  <a href="https://datarobot.github.io/golang-datarobot-filesync/">
     <img src="https://img.shields.io/badge/documentation-a?label=Docs&labelColor=30373D&color=5B8FF9" alt="Documentation">
   </a>
 </p>
@@ -14,7 +14,7 @@ rsync for the DataRobot Files API. A single static Go binary that makes a local 
 a DataRobot Files container match, transferring only the difference, xz-compressed.
 
 It is also a `dr` CLI plugin, so everything below works equally as `dr sync …`. Full
-documentation: [Docs Site](https://verbose-adventure-nyozgq5.pages.github.io/).
+documentation: [Docs Site](https://datarobot.github.io/golang-datarobot-filesync/).
 
 ```sh
 dr-sync init                          # create a container, print its id
@@ -255,5 +255,4 @@ and the guarantees. Read it before changing sync semantics.
 
 ## Licence
 
-Released under the terms of the DataRobot Tool and Utility Agreement; see
-[LICENSE.txt](LICENSE.txt).
+Released under the Apache License 2.0; see [LICENSE.txt](LICENSE.txt). See [CONTRIBUTING.md](CONTRIBUTING.md) to contribute.
