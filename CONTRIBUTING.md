@@ -11,6 +11,8 @@ Guidelines for developing and contributing to this project.
 
 Run `task lint` and `task test` before you open a pull request. `task --list` shows the other tasks, and [SPEC.md](SPEC.md) describes the sync semantics a change must keep.
 
+Every Go file starts with the Apache 2.0 header in `.licenserc.yaml`. CI checks it with [SkyWalking Eyes](https://github.com/apache/skywalking-eyes). To run it locally, install it with `go install github.com/apache/skywalking-eyes/cmd/license-eye@v0.9.0`, then run `license-eye -c .licenserc.yaml header fix` to add a missing header.
+
 ## Opening new issues
 
 - Before opening a new issue check if there are any existing FAQ entries (if one exists), issues or pull requests that match your case
