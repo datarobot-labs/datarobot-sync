@@ -42,8 +42,15 @@ const DefaultLeaseTTL = 30 * time.Minute
 const leaseRenewalsPerTTL = 3
 
 // leaseRenewTimeout bounds one renewal, so a hung request cannot stall the end of an upload. A
-// lease with a shorter TTL bounds it by the TTL, since a renewal that outlives the lease is moot.
+// lease with a short TTL bounds it further, see renewTimeout.
 const leaseRenewTimeout = 30 * time.Second
+
+// renewTimeout is how long one renewal may run. A renewal starts a third of the TTL after the
+// previous heartbeat, so two thirds of the lease is left, and a renewal that outlives it is
+// moot: another client already treats the lease as expired.
+func (h *LeaseHolder) renewTimeout() time.Duration {
+	return min(leaseRenewTimeout, h.ttl-h.ttl/leaseRenewalsPerTTL)
+}
 
 // Lease is an advisory claim on a container, written as an object under the locks prefix.
 //
@@ -261,7 +268,7 @@ func (h *LeaseHolder) dropSuperseded(ctx context.Context) error {
 //
 // A renewal that fails is passed to onError and retried on the next tick rather than ending the
 // loop, so one failure still leaves a second attempt inside the TTL. A renewal always runs to
-// completion, bounded by the shorter of leaseRenewTimeout and the TTL, not by ctx or stop: abandoning one mid-flight
+// completion, bounded by renewTimeout, not by ctx or stop: abandoning one mid-flight
 // can leave the new lease written but unrecorded, and Release would then miss it. The stop
 // function waits for a renewal in flight, so call it before Release; the two share the
 // holder's state. A nil holder (locking disabled), or one whose TTL is too short to split into
@@ -285,7 +292,7 @@ func (h *LeaseHolder) KeepAlive(ctx context.Context, onError func(error)) (stop 
 			case <-quit:
 				return
 			case <-ticker.C:
-				renewCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), min(leaseRenewTimeout, h.ttl))
+				renewCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), h.renewTimeout())
 				err := h.Renew(renewCtx)
 
 				cancel()

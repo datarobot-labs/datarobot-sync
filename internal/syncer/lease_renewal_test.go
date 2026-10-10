@@ -368,10 +368,13 @@ func TestReleaseDropsAPreviousLeaseThatFailedToDelete(t *testing.T) {
 	assert.Empty(t, h.lockNames(), "Release must remove the heartbeat whose delete failed")
 }
 
-// A renewal that hangs must give up within the TTL, so the next tick can try again while the
-// lease is still valid.
-func TestKeepAliveGivesUpOnAHungRenewalWithinTheTTL(t *testing.T) {
+// A renewal that hangs must give up before the lease it extends expires, so the next tick can
+// try again while the lease is still valid. It starts a third of the TTL in, so it has two
+// thirds left; a timeout of the whole TTL would run a third past the expiry.
+func TestKeepAliveGivesUpOnAHungRenewalBeforeTheLeaseExpires(t *testing.T) {
 	t.Parallel()
+
+	const ttl = 3 * time.Second
 
 	h := newHarness(t)
 	ctx := context.Background()
@@ -379,7 +382,9 @@ func TestKeepAliveGivesUpOnAHungRenewalWithinTheTTL(t *testing.T) {
 	state, err := h.store.ReadState(ctx)
 	require.NoError(t, err)
 
-	holder, err := syncer.AcquireLease(ctx, h.store, state, "hung-client", renewalTTL, false)
+	acquired := time.Now()
+
+	holder, err := syncer.AcquireLease(ctx, h.store, state, "hung-client", ttl, false)
 	require.NoError(t, err)
 
 	release := make(chan struct{})
@@ -410,8 +415,9 @@ func TestKeepAliveGivesUpOnAHungRenewalWithinTheTTL(t *testing.T) {
 	select {
 	case err := <-failures:
 		require.ErrorIs(t, err, context.DeadlineExceeded)
-	case <-time.After(renewalDeadline):
-		t.Fatal("a hung renewal was not abandoned within the TTL")
+		assert.Less(t, time.Since(acquired), ttl+ttl/6, "the renewal ran past the expiry of the lease")
+	case <-time.After(2 * ttl):
+		t.Fatal("a hung renewal was not abandoned")
 	}
 
 	releaseOnce.Do(func() { close(release) })
