@@ -60,7 +60,7 @@ dockers_v2:
     ids: [dr-sync]
     dockerfile: Dockerfile.goreleaser
     images:
-      - ghcr.io/datarobot/dr-sync
+      - ghcr.io/datarobot-labs/dr-sync
     tags:
       - "{{ .Version }}"
       - "{{ if not .Prerelease }}latest{{ end }}"
@@ -100,7 +100,7 @@ release:
     ```sh
     docker run --rm -v "$PWD:/tmp/data" \
       -e DATAROBOT_ENDPOINT -e DATAROBOT_API_TOKEN -e DR_SYNC_CATALOG_ID \
-      ghcr.io/datarobot/dr-sync:{{ .Version }} upload /tmp/data
+      ghcr.io/datarobot-labs/dr-sync:{{ .Version }} upload /tmp/data
     ```
 
     Mounted at `/tmp/data`, not `/data`: a DataRobot execution environment's container only

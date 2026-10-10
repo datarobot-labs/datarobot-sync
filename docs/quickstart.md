@@ -139,7 +139,7 @@ unmodified whether it runs on your own infra or inside one of those:
 docker run -d --name dr-sync-watch --restart unless-stopped \
   -v "$PWD:/tmp/data" \
   -e DATAROBOT_ENDPOINT -e DATAROBOT_API_TOKEN -e DR_SYNC_CATALOG_ID \
-  ghcr.io/datarobot/dr-sync:latest watch /tmp/data --delete
+  ghcr.io/datarobot-labs/dr-sync:latest watch /tmp/data --delete
 ```
 
 For a periodic push, [`examples/docker/`](../examples/docker/) builds a small

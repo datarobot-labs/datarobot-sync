@@ -15,7 +15,7 @@ docker compose logs -f watch
 
 ## Two shapes
 
-**`watch` — resident mirror.** Runs the published `ghcr.io/datarobot/dr-sync` image directly
+**`watch` — resident mirror.** Runs the published `ghcr.io/datarobot-labs/dr-sync` image directly
 with a different argv; no custom image needed. Docker's `restart: unless-stopped` is the
 supervisor.
 

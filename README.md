@@ -72,7 +72,7 @@ unmodified whether it runs on your own infra or inside one of those.
 ```sh
 docker run --rm -v "$PWD:/tmp/data" \
   -e DATAROBOT_ENDPOINT -e DATAROBOT_API_TOKEN -e DR_SYNC_CATALOG_ID \
-  ghcr.io/datarobot/dr-sync:latest upload /tmp/data
+  ghcr.io/datarobot-labs/dr-sync:latest upload /tmp/data
 ```
 
 See [`docs/quickstart.md`](docs/quickstart.md) for a full walkthrough, including running

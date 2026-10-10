@@ -22,7 +22,7 @@ in a couple of these, as a placeholder to replace.
 
 Two shapes, side by side in `docker-compose.yml`:
 
-- **`watch` — resident mirror.** Runs the published `ghcr.io/datarobot/dr-sync` image
+- **`watch` — resident mirror.** Runs the published `ghcr.io/datarobot-labs/dr-sync` image
   directly with a different argv; no custom image needed. Docker's
   `restart: unless-stopped` is the supervisor.
 - **`cron-backup` — periodic snapshot push.** A scheduled `dr-sync upload`, built from
