@@ -127,7 +127,9 @@ func FuzzReadAndExtract(f *testing.F) {
 			return nil
 		}
 
-		// Errors are expected for malformed input; a panic or a false success is the bug.
-		_ = Read(context.Background(), bytes.NewReader(data), codec, handle)
+		// An error is expected for malformed input; a panic or a false success is the bug.
+		if err := Read(context.Background(), bytes.NewReader(data), codec, handle); err != nil {
+			return
+		}
 	})
 }
