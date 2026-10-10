@@ -539,6 +539,32 @@ func TestUploadReleasesItsLeaseAfterAnInterrupt(t *testing.T) {
 	assert.Empty(t, h.lockNames(), "the lease must be released although the upload was interrupted")
 }
 
+// Two acquisitions with the same client id from the same state pick the same sequence, and the
+// second commit is rejected because the name exists. The cleanup after that failure must not
+// delete the name, which now belongs to the first holder's live lease.
+func TestAcquireLeaseCollisionLeavesTheOtherHoldersLease(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	ctx := context.Background()
+
+	state, err := h.store.ReadState(ctx)
+	require.NoError(t, err)
+
+	first, err := syncer.AcquireLease(ctx, h.store, state, "shared-client", time.Hour, false)
+	require.NoError(t, err)
+
+	_, err = syncer.AcquireLease(ctx, h.store, state, "shared-client", time.Hour, false)
+	require.Error(t, err, "the second claim collides with the first")
+
+	locks := h.lockNames()
+	require.Len(t, locks, 1, "the first holder's lease must survive the failed claim")
+	assert.True(t, strings.HasSuffix(locks[0], "-1.lock"))
+
+	require.NoError(t, first.Release(ctx))
+	assert.Empty(t, h.lockNames())
+}
+
 // A nil holder is what an upload without locking passes around, so KeepAlive must accept it.
 func TestKeepAliveOnANilHolderDoesNothing(t *testing.T) {
 	t.Parallel()
