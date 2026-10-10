@@ -175,6 +175,12 @@ func (r *uploadRun) write(ctx context.Context, plan *UploadPlan, result *UploadR
 
 	defer r.releaseLease(ctx, lease)
 
+	// Deferred after releaseLease, so it runs first: renewal has to stop before the release.
+	stopRenewing := lease.KeepAlive(ctx, func(err error) {
+		r.reporter.Warn(fmt.Sprintf("renewing the lease: %v", err))
+	})
+	defer stopRenewing()
+
 	next, err := r.commit(ctx, plan, built, present)
 	if err != nil {
 		return err

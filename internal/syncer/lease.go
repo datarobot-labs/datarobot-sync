@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/datarobot-labs/datarobot-sync/internal/drapi"
@@ -36,6 +37,12 @@ import (
 // a lease that expires early is worse than one that lingers — the point is to catch the case
 // where two CI jobs push the same tree, not to fence anything.
 const DefaultLeaseTTL = 30 * time.Minute
+
+// leaseRenewalsPerTTL is how many renewal attempts fit in one TTL.
+const leaseRenewalsPerTTL = 3
+
+// leaseRenewTimeout bounds one renewal, so a hung request cannot stall the end of an upload.
+const leaseRenewTimeout = 30 * time.Second
 
 // Lease is an advisory claim on a container, written as an object under the locks prefix.
 //
@@ -227,6 +234,53 @@ func (h *LeaseHolder) Renew(ctx context.Context) error {
 	_, err := h.store.Delete(ctx, []string{previous})
 
 	return err
+}
+
+// KeepAlive renews the lease every third of its TTL until the returned stop function runs.
+//
+// A renewal that fails is passed to onError and retried on the next tick rather than ending the
+// loop, so one failure still leaves a second attempt inside the TTL. A renewal always runs to
+// completion, bounded by leaseRenewTimeout and not by ctx or stop: abandoning one mid-flight
+// can leave the new lease written but unrecorded, and Release would then miss it. The stop
+// function waits for a renewal in flight, so call it before Release; the two share the
+// holder's state. A nil holder (locking disabled) returns a stop function that does nothing.
+func (h *LeaseHolder) KeepAlive(ctx context.Context, onError func(error)) (stop func()) {
+	if h == nil {
+		return func() {}
+	}
+
+	quit := make(chan struct{})
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		ticker := time.NewTicker(h.ttl / leaseRenewalsPerTTL)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-quit:
+				return
+			case <-ticker.C:
+				renewCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseRenewTimeout)
+				err := h.Renew(renewCtx)
+
+				cancel()
+
+				if err != nil {
+					onError(err)
+				}
+			}
+		}
+	}()
+
+	var once sync.Once
+
+	return func() {
+		once.Do(func() { close(quit) })
+		<-done
+	}
 }
 
 // Release drops the lease and reports whether it managed to.

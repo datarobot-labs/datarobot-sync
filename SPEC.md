@@ -256,7 +256,7 @@ immediately valid rather than a special case everywhere. Prints the id and the
    Slicing at `--slice-size` (64 MiB) is what removes the file-size ceiling: the API has no
    chunked upload, so a 40 GiB file becomes ~600 sibling objects reassembled by
    `io.MultiReader` on read. Cap scratch at `--max-scratch` (4 GiB) with backpressure.
-8. **Lease.** Write `.dr-sync/locks/<clientId>.lock` (15 min TTL, renewed every 5, released
+8. **Lease.** Write `.dr-sync/locks/<clientId>-<seq>.lock` (30 min TTL, renewed every 10, released
    on clean exit and on SIGINT); refuse if an unexpired foreign lease exists unless
    `--force`. Advisory, one extra listing and one small write — but it converts "two CI jobs
    push the same tree and one silently loses six minutes of work" into an immediate, legible
