@@ -56,6 +56,8 @@ type fakeAPI struct {
 	// hooks let a test interrupt the API at a specific moment.
 	beforeCommit func(stageID string, names []string) error
 	onListFiles  func()
+	// beforeDelete runs before a delete is applied; an error fails the request.
+	beforeDelete func(paths []string) error
 }
 
 type fakeContainer struct {
@@ -501,6 +503,14 @@ func (a *fakeAPI) deletePaths(t *testing.T, w http.ResponseWriter, r *http.Reque
 		http.Error(w, `{"message":"bad body"}`, http.StatusBadRequest)
 
 		return
+	}
+
+	if a.beforeDelete != nil {
+		if err := a.beforeDelete(body.Paths); err != nil {
+			writeJSON(t, w, http.StatusServiceUnavailable, map[string]string{"message": err.Error()})
+
+			return
+		}
 	}
 
 	a.mu.Lock()

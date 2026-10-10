@@ -41,7 +41,8 @@ const DefaultLeaseTTL = 30 * time.Minute
 // leaseRenewalsPerTTL is how many renewal attempts fit in one TTL.
 const leaseRenewalsPerTTL = 3
 
-// leaseRenewTimeout bounds one renewal, so a hung request cannot stall the end of an upload.
+// leaseRenewTimeout bounds one renewal, so a hung request cannot stall the end of an upload. A
+// lease with a shorter TTL bounds it by the TTL, since a renewal that outlives the lease is moot.
 const leaseRenewTimeout = 30 * time.Second
 
 // Lease is an advisory claim on a container, written as an object under the locks prefix.
@@ -175,6 +176,9 @@ type LeaseHolder struct {
 	sequence int
 	// current is the object name of the lease this process most recently wrote.
 	current string
+	// superseded holds older leases whose deletion failed. They stay visible to other clients
+	// until they expire, so every later renewal and the release retry them.
+	superseded []string
 }
 
 // AcquireLease claims the container, refusing if someone else holds an unexpired lease.
@@ -220,6 +224,10 @@ func ownMaxSequence(leases []Lease, clientID string) int {
 }
 
 // Renew extends the lease by writing the next heartbeat and dropping the previous one.
+//
+// The new heartbeat is recorded before the old one is deleted. If the delete fails, the old
+// object is remembered and deleted on the next renewal or at Release, so a transient failure
+// cannot leave a live lease behind that refuses another client for a whole TTL.
 func (h *LeaseHolder) Renew(ctx context.Context) error {
 	previous := h.current
 
@@ -227,25 +235,39 @@ func (h *LeaseHolder) Renew(ctx context.Context) error {
 		return err
 	}
 
-	if previous == "" {
+	if previous != "" {
+		h.superseded = append(h.superseded, previous)
+	}
+
+	return h.dropSuperseded(ctx)
+}
+
+// dropSuperseded deletes the leases this process has replaced, keeping the ones that fail.
+func (h *LeaseHolder) dropSuperseded(ctx context.Context) error {
+	if len(h.superseded) == 0 {
 		return nil
 	}
 
-	_, err := h.store.Delete(ctx, []string{previous})
+	if _, err := h.store.Delete(ctx, h.superseded); err != nil {
+		return fmt.Errorf("dropping the previous lease: %w", err)
+	}
 
-	return err
+	h.superseded = nil
+
+	return nil
 }
 
 // KeepAlive renews the lease every third of its TTL until the returned stop function runs.
 //
 // A renewal that fails is passed to onError and retried on the next tick rather than ending the
 // loop, so one failure still leaves a second attempt inside the TTL. A renewal always runs to
-// completion, bounded by leaseRenewTimeout and not by ctx or stop: abandoning one mid-flight
+// completion, bounded by the shorter of leaseRenewTimeout and the TTL, not by ctx or stop: abandoning one mid-flight
 // can leave the new lease written but unrecorded, and Release would then miss it. The stop
 // function waits for a renewal in flight, so call it before Release; the two share the
-// holder's state. A nil holder (locking disabled) returns a stop function that does nothing.
+// holder's state. A nil holder (locking disabled), or one whose TTL is too short to split into
+// renewals, returns a stop function that does nothing.
 func (h *LeaseHolder) KeepAlive(ctx context.Context, onError func(error)) (stop func()) {
-	if h == nil {
+	if h == nil || h.ttl/leaseRenewalsPerTTL <= 0 {
 		return func() {}
 	}
 
@@ -263,7 +285,7 @@ func (h *LeaseHolder) KeepAlive(ctx context.Context, onError func(error)) (stop 
 			case <-quit:
 				return
 			case <-ticker.C:
-				renewCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseRenewTimeout)
+				renewCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), min(leaseRenewTimeout, h.ttl))
 				err := h.Renew(renewCtx)
 
 				cancel()
@@ -288,15 +310,24 @@ func (h *LeaseHolder) KeepAlive(ctx context.Context, onError func(error)) (stop 
 // A caller should warn rather than fail on an error: a lease left behind expires on its own,
 // and failing a completed sync because a cleanup call did not land would be the wrong trade.
 func (h *LeaseHolder) Release(ctx context.Context) error {
-	if h == nil || h.current == "" {
+	if h == nil {
 		return nil
 	}
 
-	name := h.current
-	h.current = ""
+	names := h.superseded
+	if h.current != "" {
+		names = append(names, h.current)
+	}
 
-	if _, err := h.store.Delete(ctx, []string{name}); err != nil {
-		return fmt.Errorf("releasing the lease on %s: %w", name, err)
+	if len(names) == 0 {
+		return nil
+	}
+
+	h.current = ""
+	h.superseded = nil
+
+	if _, err := h.store.Delete(ctx, names); err != nil {
+		return fmt.Errorf("releasing the lease on %s: %w", strings.Join(names, ", "), err)
 	}
 
 	return nil

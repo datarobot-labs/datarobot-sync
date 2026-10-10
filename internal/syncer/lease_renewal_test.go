@@ -34,8 +34,9 @@ import (
 const (
 	locksPrefix = ".dr-sync/locks/"
 
-	// renewalTTL makes the lease renew every 50 ms, so a test sees several renewals quickly.
-	renewalTTL = 150 * time.Millisecond
+	// renewalTTL makes the lease renew every 200 ms, so a test sees several renewals quickly.
+	// A renewal is bounded by the TTL, so it must stay well above a loopback request under -race.
+	renewalTTL = 600 * time.Millisecond
 
 	// renewalDeadline bounds every wait for a renewal, so a regression fails the test instead of
 	// hanging it.
@@ -281,7 +282,7 @@ func TestKeepAliveStopWaitsForARenewalInFlight(t *testing.T) {
 	select {
 	case <-stopped:
 		t.Fatal("stop returned while a renewal was still in flight")
-	case <-time.After(3 * renewalTTL):
+	case <-time.After(renewalTTL / 4):
 	}
 
 	releaseHandler()
@@ -294,6 +295,151 @@ func TestKeepAliveStopWaitsForARenewalInFlight(t *testing.T) {
 
 	require.NoError(t, holder.Release(ctx))
 	assert.Empty(t, h.lockNames(), "Release must remove the lease the interrupted renewal wrote")
+}
+
+// If deleting the previous heartbeat fails, the old object stays visible to other clients until
+// it expires. The holder must remember it and drop it on the next renewal.
+func TestRenewDropsAPreviousLeaseThatFailedToDelete(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	ctx := context.Background()
+
+	state, err := h.store.ReadState(ctx)
+	require.NoError(t, err)
+
+	holder, err := syncer.AcquireLease(ctx, h.store, state, "delete-retry-client", time.Hour, false)
+	require.NoError(t, err)
+
+	var failDelete atomic.Bool
+
+	failDelete.Store(true)
+
+	h.api.beforeDelete = func([]string) error {
+		if failDelete.Load() {
+			return errors.New("simulated delete failure")
+		}
+
+		return nil
+	}
+
+	require.Error(t, holder.Renew(ctx), "a failed delete must be reported")
+	assert.Len(t, h.lockNames(), 2, "the new heartbeat is written and the old one is still there")
+
+	failDelete.Store(false)
+
+	require.NoError(t, holder.Renew(ctx))
+
+	locks := h.lockNames()
+	require.Len(t, locks, 1, "the next renewal must drop both older heartbeats")
+	assert.True(t, strings.HasSuffix(locks[0], "-3.lock"))
+}
+
+// Release is the last chance to drop a heartbeat whose delete failed during a renewal.
+func TestReleaseDropsAPreviousLeaseThatFailedToDelete(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	ctx := context.Background()
+
+	state, err := h.store.ReadState(ctx)
+	require.NoError(t, err)
+
+	holder, err := syncer.AcquireLease(ctx, h.store, state, "release-retry-client", time.Hour, false)
+	require.NoError(t, err)
+
+	var failDelete atomic.Bool
+
+	failDelete.Store(true)
+
+	h.api.beforeDelete = func([]string) error {
+		if failDelete.Load() {
+			return errors.New("simulated delete failure")
+		}
+
+		return nil
+	}
+
+	require.Error(t, holder.Renew(ctx))
+
+	failDelete.Store(false)
+
+	require.NoError(t, holder.Release(ctx))
+	assert.Empty(t, h.lockNames(), "Release must remove the heartbeat whose delete failed")
+}
+
+// A renewal that hangs must give up within the TTL, so the next tick can try again while the
+// lease is still valid.
+func TestKeepAliveGivesUpOnAHungRenewalWithinTheTTL(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	ctx := context.Background()
+
+	state, err := h.store.ReadState(ctx)
+	require.NoError(t, err)
+
+	holder, err := syncer.AcquireLease(ctx, h.store, state, "hung-client", renewalTTL, false)
+	require.NoError(t, err)
+
+	release := make(chan struct{})
+
+	var releaseOnce sync.Once
+
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+
+	h.api.beforeCommit = func(_ string, names []string) error {
+		for _, name := range names {
+			if strings.HasSuffix(name, "-2.lock") {
+				<-release
+			}
+		}
+
+		return nil
+	}
+
+	failures := make(chan error, 1)
+
+	stop := holder.KeepAlive(ctx, func(err error) {
+		select {
+		case failures <- err:
+		default:
+		}
+	})
+
+	select {
+	case err := <-failures:
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(renewalDeadline):
+		t.Fatal("a hung renewal was not abandoned within the TTL")
+	}
+
+	releaseOnce.Do(func() { close(release) })
+	stop()
+}
+
+// A TTL too short to split into renewals would make the ticker panic, so there is nothing to
+// renew: the lease is already expired, and KeepAlive must leave it alone.
+func TestKeepAliveOnATTLTooShortToRenewDoesNothing(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	ctx := context.Background()
+
+	state, err := h.store.ReadState(ctx)
+	require.NoError(t, err)
+
+	holder, err := syncer.AcquireLease(ctx, h.store, state, "short-client", 2*time.Nanosecond, false)
+	require.NoError(t, err)
+
+	stop := holder.KeepAlive(ctx, func(err error) { t.Errorf("unexpected renewal error: %v", err) })
+
+	time.Sleep(renewalTTL / 2)
+	stop()
+
+	locks := h.lockNames()
+	require.Len(t, locks, 1)
+	assert.True(t, strings.HasSuffix(locks[0], "-1.lock"), "no renewal may run for a TTL this short")
 }
 
 // A nil holder is what an upload without locking passes around, so KeepAlive must accept it.
