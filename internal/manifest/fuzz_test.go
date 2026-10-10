@@ -101,7 +101,7 @@ func FuzzDecodeManifestJSON(f *testing.F) {
 			t.Fatal(err)
 		}
 
-		m, err := DecodeBytes(compressed.Bytes())
+		m, err := decode(bytes.NewReader(compressed.Bytes()), fuzzDecodeLimit)
 		if err != nil {
 			return
 		}

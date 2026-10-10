@@ -58,6 +58,9 @@ type fakeAPI struct {
 	onListFiles  func()
 	// beforeDelete runs before a delete is applied; an error fails the request.
 	beforeDelete func(paths []string) error
+	// afterCommit runs once a commit has been applied and before the response is sent, so a
+	// test can make the server answer late and the client give up on a commit that landed.
+	afterCommit func(names []string)
 }
 
 type fakeContainer struct {
@@ -396,6 +399,10 @@ func (a *fakeAPI) commitStage(t *testing.T, w http.ResponseWriter, r *http.Reque
 
 	a.nextID++
 	container.versionID = fmt.Sprintf("%s-v%d", id, a.nextID)
+
+	if a.afterCommit != nil {
+		a.afterCommit(names)
+	}
 
 	writeJSON(t, w, http.StatusOK, map[string]any{
 		"catalogId":        id,

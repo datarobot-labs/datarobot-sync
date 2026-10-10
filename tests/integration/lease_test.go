@@ -36,8 +36,9 @@ func TestLiveLeaseRenewalReplacesTheLease(t *testing.T) {
 	state, err := l.store.ReadState(ctx)
 	require.NoError(t, err)
 
-	// A 3 s TTL renews every second.
-	holder, err := syncer.AcquireLease(ctx, l.store, state, "live-renewal-test", 3*time.Second, false)
+	// A 30 s TTL renews every 10 s, and a renewal gets 10 s. A renewal makes four requests, and
+	// on the real service that takes longer than the 1 s a 3 s TTL would allow.
+	holder, err := syncer.AcquireLease(ctx, l.store, state, "live-renewal-test", 30*time.Second, false)
 	require.NoError(t, err)
 
 	stop := holder.KeepAlive(ctx, func(err error) { t.Errorf("renewal failed: %v", err) })
@@ -46,7 +47,7 @@ func TestLiveLeaseRenewalReplacesTheLease(t *testing.T) {
 		current, err := l.store.ReadState(ctx)
 
 		return err == nil && len(current.Leases) == 1 && current.Leases[0].Sequence >= 2
-	}, 60*time.Second, time.Second, "the lease was never replaced by a renewal")
+	}, 120*time.Second, 2*time.Second, "the lease was never replaced by a renewal")
 
 	stop()
 
@@ -55,4 +56,15 @@ func TestLiveLeaseRenewalReplacesTheLease(t *testing.T) {
 	released, err := l.store.ReadState(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, released.Leases, "the lease must be gone after Release")
+}
+
+// A renewal that times out cannot tell whether the heartbeat landed, so the holder deletes that
+// name later whether or not it exists. The real service must accept a delete of a missing name.
+func TestLiveDeletingAMissingLeaseSucceeds(t *testing.T) {
+	l := newLive(t)
+
+	deleted, err := l.store.Delete(context.Background(), []string{".dr-sync/locks/never-written-1.lock"})
+
+	require.NoError(t, err)
+	assert.Zero(t, deleted)
 }

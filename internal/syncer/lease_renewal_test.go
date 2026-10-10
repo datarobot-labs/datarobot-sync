@@ -34,9 +34,10 @@ import (
 const (
 	locksPrefix = ".dr-sync/locks/"
 
-	// renewalTTL makes the lease renew every 200 ms, so a test sees several renewals quickly.
-	// A renewal is bounded by the TTL, so it must stay well above a loopback request under -race.
-	renewalTTL = 600 * time.Millisecond
+	// renewalTTL makes the lease renew every 500 ms, so a test sees several renewals quickly.
+	// A renewal is bounded by that interval, so it must stay well above a loopback request
+	// under -race.
+	renewalTTL = 1500 * time.Millisecond
 
 	// renewalDeadline bounds every wait for a renewal, so a regression fails the test instead of
 	// hanging it.
@@ -170,8 +171,8 @@ func TestUploadWithoutLockNeverWritesALease(t *testing.T) {
 		}
 
 		if holdsManifest(names) {
-			// Longer than a renewal interval would be for any TTL a test would pick.
-			time.Sleep(2 * renewalTTL)
+			// Longer than a renewal interval.
+			time.Sleep(renewalTTL)
 
 			if len(h.lockNames()) > 0 {
 				sawLock.Store(true)
@@ -216,7 +217,7 @@ func TestKeepAliveStopsRenewingAfterStop(t *testing.T) {
 
 	settled := h.lockNames()
 
-	time.Sleep(3 * renewalTTL)
+	time.Sleep(renewalTTL)
 
 	assert.Equal(t, settled, h.lockNames(), "a renewal ran after stop returned")
 	require.NoError(t, holder.Release(ctx))
@@ -282,7 +283,7 @@ func TestKeepAliveStopWaitsForARenewalInFlight(t *testing.T) {
 	select {
 	case <-stopped:
 		t.Fatal("stop returned while a renewal was still in flight")
-	case <-time.After(renewalTTL / 4):
+	case <-time.After(renewalTTL / 6):
 	}
 
 	releaseHandler()
@@ -368,10 +369,10 @@ func TestReleaseDropsAPreviousLeaseThatFailedToDelete(t *testing.T) {
 	assert.Empty(t, h.lockNames(), "Release must remove the heartbeat whose delete failed")
 }
 
-// A renewal that hangs must give up before the lease it extends expires, so the next tick can
-// try again while the lease is still valid. It starts a third of the TTL in, so it has two
-// thirds left; a timeout of the whole TTL would run a third past the expiry.
-func TestKeepAliveGivesUpOnAHungRenewalBeforeTheLeaseExpires(t *testing.T) {
+// A renewal that hangs must give up within one renewal interval, so the next attempt starts
+// while a third of the lease is still left. A timeout of the lease's whole remaining validity
+// would end it at the expiry, and no second attempt would fit.
+func TestKeepAliveGivesUpOnAHungRenewalWithinOneInterval(t *testing.T) {
 	t.Parallel()
 
 	const ttl = 3 * time.Second
@@ -415,7 +416,7 @@ func TestKeepAliveGivesUpOnAHungRenewalBeforeTheLeaseExpires(t *testing.T) {
 	select {
 	case err := <-failures:
 		require.ErrorIs(t, err, context.DeadlineExceeded)
-		assert.Less(t, time.Since(acquired), ttl+ttl/6, "the renewal ran past the expiry of the lease")
+		assert.Less(t, time.Since(acquired), ttl*5/6, "the hung renewal outlived its interval, leaving no room for a second attempt")
 	case <-time.After(2 * ttl):
 		t.Fatal("a hung renewal was not abandoned")
 	}
@@ -446,6 +447,96 @@ func TestKeepAliveOnATTLTooShortToRenewDoesNothing(t *testing.T) {
 	locks := h.lockNames()
 	require.Len(t, locks, 1)
 	assert.True(t, strings.HasSuffix(locks[0], "-1.lock"), "no renewal may run for a TTL this short")
+}
+
+// A renewal that times out may still have landed. The holder must remember the heartbeat and
+// delete it at release, or it stays live for the whole TTL and refuses the next client.
+func TestRenewRemembersAHeartbeatThatMayHaveLanded(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	ctx := context.Background()
+
+	state, err := h.store.ReadState(ctx)
+	require.NoError(t, err)
+
+	holder, err := syncer.AcquireLease(ctx, h.store, state, "late-answer-client", time.Hour, false)
+	require.NoError(t, err)
+
+	// The server applies the heartbeat and answers after the client has given up.
+	h.api.afterCommit = func(names []string) {
+		for _, name := range names {
+			if strings.HasSuffix(name, "-2.lock") {
+				time.Sleep(400 * time.Millisecond)
+			}
+		}
+	}
+
+	renewCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+
+	require.Error(t, holder.Renew(renewCtx), "the client must give up before the late answer")
+
+	require.NoError(t, holder.Release(ctx))
+	assert.Empty(t, h.lockNames(), "Release must remove the heartbeat that landed unseen")
+}
+
+// The first claim can land the same way, and the caller never gets a holder to release.
+func TestAcquireLeaseCleansUpAClaimThatMayHaveLanded(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	ctx := context.Background()
+
+	state, err := h.store.ReadState(ctx)
+	require.NoError(t, err)
+
+	h.api.afterCommit = func(names []string) {
+		for _, name := range names {
+			if strings.HasSuffix(name, "-1.lock") {
+				time.Sleep(400 * time.Millisecond)
+			}
+		}
+	}
+
+	acquireCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+
+	_, err = syncer.AcquireLease(acquireCtx, h.store, state, "late-claim-client", time.Hour, false)
+
+	require.Error(t, err)
+	assert.Empty(t, h.lockNames(), "a claim that landed after the client gave up must be removed")
+}
+
+// An interrupt cancels the upload's context, and the release must still reach the service.
+// Releasing with the canceled context would leave the lease to expire on its own.
+func TestUploadReleasesItsLeaseAfterAnInterrupt(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	source := writeTree(t, fixture)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	h.api.beforeCommit = func(_ string, names []string) error {
+		if holdsManifest(names) {
+			cancel()
+
+			return errors.New("simulated interrupt")
+		}
+
+		return nil
+	}
+
+	_, err := syncer.Upload(ctx, h.store, progress.Discard(), syncer.UploadOptions{
+		Root:  source,
+		Level: manifest.DefaultLevel,
+		Lock:  true,
+	})
+
+	require.Error(t, err)
+	assert.Empty(t, h.lockNames(), "the lease must be released although the upload was interrupted")
 }
 
 // A nil holder is what an upload without locking passes around, so KeepAlive must accept it.

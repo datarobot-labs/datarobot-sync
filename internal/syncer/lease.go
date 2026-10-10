@@ -17,6 +17,7 @@ package syncer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/user"
@@ -41,15 +42,19 @@ const DefaultLeaseTTL = 30 * time.Minute
 // leaseRenewalsPerTTL is how many renewal attempts fit in one TTL.
 const leaseRenewalsPerTTL = 3
 
+// leaseReleaseTimeout bounds the cleanup that drops a lease after the run that took it ended,
+// including a run that was interrupted.
+const leaseReleaseTimeout = 30 * time.Second
+
 // leaseRenewTimeout bounds one renewal, so a hung request cannot stall the end of an upload. A
 // lease with a short TTL bounds it further, see renewTimeout.
 const leaseRenewTimeout = 30 * time.Second
 
-// renewTimeout is how long one renewal may run. A renewal starts a third of the TTL after the
-// previous heartbeat, so two thirds of the lease is left, and a renewal that outlives it is
-// moot: another client already treats the lease as expired.
+// renewTimeout is how long one renewal may run: one renewal interval. A hung attempt then ends
+// before the next tick, so a second attempt starts with a third of the lease left, and no
+// attempt runs past the expiry of the lease it extends.
 func (h *LeaseHolder) renewTimeout() time.Duration {
-	return min(leaseRenewTimeout, h.ttl-h.ttl/leaseRenewalsPerTTL)
+	return min(leaseRenewTimeout, h.ttl/leaseRenewalsPerTTL)
 }
 
 // Lease is an advisory claim on a container, written as an object under the locks prefix.
@@ -201,6 +206,15 @@ func AcquireLease(ctx context.Context, store *Store, state *State, clientID stri
 	holder := &LeaseHolder{store: store, clientID: clientID, ttl: ttl, sequence: ownMaxSequence(state.Leases, clientID)}
 
 	if err := holder.write(ctx); err != nil {
+		// The claim may have landed despite the error. Clean up with a context that survives
+		// the one that just failed.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseReleaseTimeout)
+		defer cancel()
+
+		if releaseErr := holder.Release(cleanupCtx); releaseErr != nil {
+			return nil, errors.Join(err, releaseErr)
+		}
+
 		return nil, err
 	}
 
@@ -376,6 +390,11 @@ func (h *LeaseHolder) write(ctx context.Context) error {
 	object := Object{Name: name, Content: content, Size: int64(len(content))}
 
 	if err := h.store.Commit(ctx, nil, []Object{object}, CommitOptions{Overwrite: drapi.OverwriteError}); err != nil {
+		// A failed commit may still have landed, for example when the response arrives after a
+		// timeout. Deleting a name that does not exist is harmless, so remember it for the next
+		// renewal and the release rather than leave a live lease nobody tracks.
+		h.superseded = append(h.superseded, name)
+
 		return fmt.Errorf("claiming the container: %w", err)
 	}
 

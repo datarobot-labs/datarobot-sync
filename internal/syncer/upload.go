@@ -509,9 +509,14 @@ func (r *uploadRun) releaseLease(ctx context.Context, lease *LeaseHolder) {
 		return
 	}
 
+	// Release with a context that survives an interrupt, or the delete is canceled with the
+	// upload and the lease stays until it expires.
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseReleaseTimeout)
+	defer cancel()
+
 	// A release failure is a warning, not a failure: the lease expires on its own, and
 	// failing a completed sync over a cleanup call would be the wrong trade.
-	if err := lease.Release(ctx); err != nil {
+	if err := lease.Release(releaseCtx); err != nil {
 		r.reporter.Warn(err.Error())
 	}
 }
