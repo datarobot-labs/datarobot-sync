@@ -70,18 +70,24 @@ func Encode(m *Manifest) ([]byte, error) {
 
 // Decode parses an xz-compressed manifest.
 func Decode(r io.Reader) (*Manifest, error) {
+	return decode(r, maxManifestBytes)
+}
+
+// decode parses an xz-compressed manifest that expands to fewer than limit bytes. The limit is
+// a parameter so a fuzz target can bound memory far below the production cap.
+func decode(r io.Reader, limit int64) (*Manifest, error) {
 	reader, err := xz.ReaderConfig{}.NewReader(r)
 	if err != nil {
 		return nil, fmt.Errorf("reading manifest: not valid xz: %w", err)
 	}
 
-	plain, err := io.ReadAll(io.LimitReader(reader, maxManifestBytes))
+	plain, err := io.ReadAll(io.LimitReader(reader, limit))
 	if err != nil {
 		return nil, fmt.Errorf("decompressing manifest: %w", err)
 	}
 
-	if len(plain) == maxManifestBytes {
-		return nil, fmt.Errorf("manifest exceeds the %d byte limit", maxManifestBytes)
+	if int64(len(plain)) == limit {
+		return nil, fmt.Errorf("manifest exceeds the %d byte limit", limit)
 	}
 
 	var m Manifest
