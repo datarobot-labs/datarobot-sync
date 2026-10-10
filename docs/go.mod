@@ -1,4 +1,4 @@
-module github.com/datarobot/golang-datarobot-filesync/docs
+module github.com/datarobot-labs/datarobot-sync/docs
 
 go 1.26.5
 

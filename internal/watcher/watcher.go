@@ -37,7 +37,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/scan"
+	"github.com/datarobot-labs/datarobot-sync/internal/scan"
 )
 
 // Default timing. Chosen so a burst of saves from an editor or a build coalesces into one push,

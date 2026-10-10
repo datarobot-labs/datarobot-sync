@@ -22,7 +22,7 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
 )
 
 // Normalize converts a local relative path to the manifest's canonical form: slash-separated

@@ -1,11 +1,11 @@
 <p align="center">
-  <a href="https://github.com/datarobot/golang-datarobot-filesync">
+  <a href="https://github.com/datarobot-labs/datarobot-sync">
     <img src="https://af.datarobot.com/img/datarobot_logo.avif" width="600px" alt="DataRobot Logo"/>
   </a>
 </p>
 <h2 align="center">dr-sync: DataRobot rsync</h2>
 <p align="center">
-  <a href="https://datarobot.github.io/golang-datarobot-filesync/">
+  <a href="https://datarobot-labs.github.io/datarobot-sync/">
     <img src="https://img.shields.io/badge/documentation-a?label=Docs&labelColor=30373D&color=5B8FF9" alt="Documentation">
   </a>
 </p>
@@ -14,7 +14,7 @@ rsync for the DataRobot Files API. A single static Go binary that makes a local 
 a DataRobot Files container match, transferring only the difference, xz-compressed.
 
 It is also a `dr` CLI plugin, so everything below works equally as `dr sync …`. Full
-documentation: [Docs Site](https://datarobot.github.io/golang-datarobot-filesync/).
+documentation: [Docs Site](https://datarobot-labs.github.io/datarobot-sync/).
 
 ```sh
 dr-sync init                          # create a container, print its id
@@ -46,7 +46,7 @@ falls back to the equivalent request automatically, no configuration needed.
 As a `dr` plugin, from a release or a local archive:
 
 ```sh
-dr plugin install sync --url https://github.com/datarobot/golang-datarobot-filesync/releases/latest/download/sync-<version>.tar.xz
+dr plugin install sync --url https://github.com/datarobot-labs/datarobot-sync/releases/latest/download/sync-<version>.tar.xz
 dr plugin install sync --file dist/sync-<version>.tar.xz    # from `task plugin:package`
 dr sync --help
 ```
@@ -56,7 +56,7 @@ That installs under `$XDG_CONFIG_HOME/datarobot/plugins/sync/`. For development,
 `task install:local` does.
 
 As a standalone binary — download the archive for your platform from
-[releases](https://github.com/datarobot/golang-datarobot-filesync/releases), or build it:
+[releases](https://github.com/datarobot-labs/datarobot-sync/releases), or build it:
 
 ```sh
 task install:local     # builds into ~/.local/bin/dr-sync

@@ -7,7 +7,7 @@ Moving a directory tree in or out of the DataRobot Files API otherwise means eit
 Python SDK's `fsspec` layer (per-file, uncompressed, needs a Python runtime) or
 hand-rolled `curl` — neither drops into CI, and both re-send bytes that have not
 changed. See
-[SPEC.md](https://github.com/datarobot/golang-datarobot-filesync/blob/main/SPEC.md) for
+[SPEC.md](https://github.com/datarobot-labs/datarobot-sync/blob/main/SPEC.md) for
 the full design; this page is the summary.
 
 ## Invariants

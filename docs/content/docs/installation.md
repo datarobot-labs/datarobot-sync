@@ -14,7 +14,7 @@ falls back to the equivalent request automatically, no configuration needed.
 From a release or a local archive:
 
 ```sh
-dr plugin install sync --url https://github.com/datarobot/golang-datarobot-filesync/releases/latest/download/sync-<version>.tar.xz
+dr plugin install sync --url https://github.com/datarobot-labs/datarobot-sync/releases/latest/download/sync-<version>.tar.xz
 dr plugin install sync --file dist/sync-<version>.tar.xz    # from `task plugin:package`
 dr sync --help
 ```
@@ -26,7 +26,7 @@ That installs under `$XDG_CONFIG_HOME/datarobot/plugins/sync/`. For development,
 ## As a standalone binary
 
 Download the archive for your platform from
-[releases](https://github.com/datarobot/golang-datarobot-filesync/releases), or build it:
+[releases](https://github.com/datarobot-labs/datarobot-sync/releases), or build it:
 
 ```sh
 task install:local     # builds into ~/.local/bin/dr-sync

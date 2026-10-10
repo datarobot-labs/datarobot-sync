@@ -24,8 +24,8 @@ import (
 	"path/filepath"
 	"sync/atomic"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
-	"github.com/datarobot/golang-datarobot-filesync/internal/scan"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/scan"
 )
 
 // buildSeq disambiguates concurrent Build calls in the same process: upload.go's buildPacks

@@ -35,7 +35,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
 )
 
 // CheckMode decides how much work goes into deciding a file has changed.

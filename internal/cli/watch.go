@@ -23,10 +23,10 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/drapi"
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
-	"github.com/datarobot/golang-datarobot-filesync/internal/syncer"
-	"github.com/datarobot/golang-datarobot-filesync/internal/watcher"
+	"github.com/datarobot-labs/datarobot-sync/internal/drapi"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/syncer"
+	"github.com/datarobot-labs/datarobot-sync/internal/watcher"
 )
 
 // DefaultWatchGCInterval is how often watch sweeps tier-1 garbage, independent of any push.

@@ -22,9 +22,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
-	"github.com/datarobot/golang-datarobot-filesync/internal/progress"
-	"github.com/datarobot/golang-datarobot-filesync/internal/syncer"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/progress"
+	"github.com/datarobot-labs/datarobot-sync/internal/syncer"
 )
 
 // A writer registration must round-trip through the same object-naming scheme a lease uses,

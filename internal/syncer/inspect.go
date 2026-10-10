@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
 )
 
 // Inspection is a read-only report on a container's dr-sync state.

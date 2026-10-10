@@ -20,9 +20,9 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X github.com/datarobot/golang-datarobot-filesync/internal/version.Version={{ .Version }}
-      - -X github.com/datarobot/golang-datarobot-filesync/internal/version.GitCommit={{ .FullCommit }}
-      - -X github.com/datarobot/golang-datarobot-filesync/internal/version.BuildDate={{ .CommitDate }}
+      - -X github.com/datarobot-labs/datarobot-sync/internal/version.Version={{ .Version }}
+      - -X github.com/datarobot-labs/datarobot-sync/internal/version.GitCommit={{ .FullCommit }}
+      - -X github.com/datarobot-labs/datarobot-sync/internal/version.BuildDate={{ .CommitDate }}
     goos:
       - linux
       - darwin
@@ -70,8 +70,8 @@ dockers_v2:
     labels:
       org.opencontainers.image.title: "{{ .ProjectName }}"
       org.opencontainers.image.description: "rsync for the DataRobot Files API"
-      org.opencontainers.image.url: "https://github.com/datarobot/golang-datarobot-filesync"
-      org.opencontainers.image.source: "https://github.com/datarobot/golang-datarobot-filesync"
+      org.opencontainers.image.url: "https://github.com/datarobot-labs/datarobot-sync"
+      org.opencontainers.image.source: "https://github.com/datarobot-labs/datarobot-sync"
       org.opencontainers.image.version: "{{ .Version }}"
       org.opencontainers.image.revision: "{{ .FullCommit }}"
       org.opencontainers.image.created: "{{ .CommitDate }}"
@@ -91,7 +91,7 @@ release:
     ## Install as a `dr` plugin
 
     ```sh
-    dr plugin install sync --url https://github.com/datarobot/golang-datarobot-filesync/releases/download/{{ .Tag }}/sync-{{ .Version }}.tar.xz
+    dr plugin install sync --url https://github.com/datarobot-labs/datarobot-sync/releases/download/{{ .Tag }}/sync-{{ .Version }}.tar.xz
     dr sync init
     ```
 

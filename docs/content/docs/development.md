@@ -17,7 +17,7 @@ Building from source needs Go as pinned in `.tool-versions`, managed with asdf. 
 changing that file, run `asdf reshim` — a version in `.tool-versions` does not create
 the shim on its own.
 
-[SPEC.md](https://github.com/datarobot/golang-datarobot-filesync/blob/main/SPEC.md) is
+[SPEC.md](https://github.com/datarobot-labs/datarobot-sync/blob/main/SPEC.md) is
 the source of truth for sync semantics, the on-container layout, and the guarantees.
 Read it before changing anything that touches the manifest schema, the `.dr-sync/`
 object layout, the upload/download phase machines, garbage collection, or exit codes —

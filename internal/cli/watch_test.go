@@ -25,9 +25,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/progress"
-	"github.com/datarobot/golang-datarobot-filesync/internal/syncer"
-	"github.com/datarobot/golang-datarobot-filesync/internal/watcher"
+	"github.com/datarobot-labs/datarobot-sync/internal/progress"
+	"github.com/datarobot-labs/datarobot-sync/internal/syncer"
+	"github.com/datarobot-labs/datarobot-sync/internal/watcher"
 )
 
 // newTestWatchCycle builds a watchCycle with just enough wired up to exercise the
