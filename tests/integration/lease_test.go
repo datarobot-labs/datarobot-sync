@@ -17,13 +17,16 @@
 package integration
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/datarobot-labs/datarobot-sync/internal/drapi"
 	"github.com/datarobot-labs/datarobot-sync/internal/syncer"
 )
 
@@ -67,4 +70,31 @@ func TestLiveDeletingAMissingLeaseSucceeds(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Zero(t, deleted)
+}
+
+// The lease cleanup treats a 409 on a heartbeat as someone else's object and keeps it, and any
+// other failure as possibly its own. That only holds if replaying a commit that already landed
+// does not come back as a 409.
+func TestLiveReplayedCommitIsNotAConflict(t *testing.T) {
+	l := newLive(t)
+	ctx := context.Background()
+
+	stage, err := l.client.CreateStage(ctx, l.containerID)
+	require.NoError(t, err)
+
+	content := []byte("replay")
+
+	require.NoError(t, l.client.UploadToStage(ctx, l.containerID, stage.StageID, drapi.FormFile{
+		Filename: ".dr-sync/probe/replay.txt",
+		Size:     int64(len(content)),
+		Open:     func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(content)), nil },
+	}))
+
+	_, err = l.client.CommitStage(ctx, l.containerID, stage.StageID, drapi.OverwriteError)
+	require.NoError(t, err)
+
+	_, err = l.client.CommitStage(ctx, l.containerID, stage.StageID, drapi.OverwriteError)
+
+	require.Error(t, err, "a stage cannot be applied twice")
+	assert.False(t, drapi.IsConflict(err), "a replayed commit must not look like a name collision: %v", err)
 }

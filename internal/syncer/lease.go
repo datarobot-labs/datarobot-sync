@@ -395,8 +395,9 @@ func (h *LeaseHolder) write(ctx context.Context) error {
 		// A failed commit may still have landed, for example when the response arrives after a
 		// timeout. Deleting a name that does not exist is harmless, so remember it for the next
 		// renewal and the release rather than leave a live lease nobody tracks. A conflict is the
-		// exception: the commit was rejected whole because the name exists, so the object is
-		// someone else's and must stay.
+		// exception: the commit was rejected whole because the name existed before it, so the
+		// object is someone else's and must stay. A retry of a commit that landed does not come
+		// back as a conflict: the service answers 422, "the stage can't be applied twice".
 		if !drapi.IsConflict(err) {
 			h.superseded = append(h.superseded, name)
 		}

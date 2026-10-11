@@ -41,6 +41,27 @@ func (c *countingHasher) Write(p []byte) (int, error) {
 	return c.sum.Write(p)
 }
 
+// fuzzDecompressedLimit caps how much one compressed fuzz input may expand. A few bytes of xz
+// can describe gigabytes, which would stall a fuzz worker on decompression and hashing rather
+// than explore new inputs.
+const fuzzDecompressedLimit = 16 << 20
+
+// expandsBeyond reports whether the xz stream in data decompresses to more than limit bytes.
+// A stream that is malformed before the limit is not oversized: Read rejects it quickly.
+func expandsBeyond(data []byte, limit int64) bool {
+	reader, err := manifest.XZReader(bytes.NewReader(data))
+	if err != nil {
+		return false
+	}
+
+	n, err := io.Copy(io.Discard, io.LimitReader(reader, limit+1))
+	if err != nil {
+		return false
+	}
+
+	return n > limit
+}
+
 // tarWithBlob builds a pack's tar stream holding one blob under the given member name.
 func tarWithBlob(tb testing.TB, name string, content []byte) []byte {
 	tb.Helper()
@@ -106,6 +127,10 @@ func FuzzReadAndExtract(f *testing.F) {
 		codec := manifest.CodecStore
 		if compressed {
 			codec = manifest.CodecXZ
+
+			if expandsBeyond(data, fuzzDecompressedLimit) {
+				t.Skip("decompresses past the fuzz budget")
+			}
 		}
 
 		handle := func(member Member) error {
@@ -132,4 +157,26 @@ func FuzzReadAndExtract(f *testing.F) {
 			return
 		}
 	})
+}
+
+func TestExpandsBeyondDetectsAnOversizedStream(t *testing.T) {
+	t.Parallel()
+
+	bomb := compressXZ(t, make([]byte, 1<<20))
+
+	if len(bomb) > 1<<12 {
+		t.Fatalf("the test stream should be tiny, got %d bytes", len(bomb))
+	}
+
+	if !expandsBeyond(bomb, 1<<19) {
+		t.Error("a stream that expands to 1 MiB must exceed a 512 KiB limit")
+	}
+
+	if expandsBeyond(bomb, 1<<20) {
+		t.Error("a stream that expands to exactly the limit is within it")
+	}
+
+	if expandsBeyond([]byte("not xz"), 1<<19) {
+		t.Error("a malformed stream is not oversized")
+	}
 }
