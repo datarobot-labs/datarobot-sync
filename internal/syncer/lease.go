@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/user"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -326,7 +327,8 @@ func (h *LeaseHolder) KeepAlive(ctx context.Context, onError func(error)) (stop 
 	}
 }
 
-// Release drops the lease and reports whether it managed to.
+// Release drops the lease and reports whether it managed to. After an error the holder keeps
+// the names it could not delete, so calling Release again retries them.
 //
 // A caller should warn rather than fail on an error: a lease left behind expires on its own,
 // and failing a completed sync because a cleanup call did not land would be the wrong trade.
@@ -335,7 +337,7 @@ func (h *LeaseHolder) Release(ctx context.Context) error {
 		return nil
 	}
 
-	names := h.superseded
+	names := slices.Clone(h.superseded)
 	if h.current != "" {
 		names = append(names, h.current)
 	}
@@ -344,12 +346,12 @@ func (h *LeaseHolder) Release(ctx context.Context) error {
 		return nil
 	}
 
-	h.current = ""
-	h.superseded = nil
-
 	if _, err := h.store.Delete(ctx, names); err != nil {
 		return fmt.Errorf("releasing the lease on %s: %w", strings.Join(names, ", "), err)
 	}
+
+	h.current = ""
+	h.superseded = nil
 
 	return nil
 }

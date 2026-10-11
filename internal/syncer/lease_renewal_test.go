@@ -369,6 +369,41 @@ func TestReleaseDropsAPreviousLeaseThatFailedToDelete(t *testing.T) {
 	assert.Empty(t, h.lockNames(), "Release must remove the heartbeat whose delete failed")
 }
 
+// A release whose delete fails leaves the lease visible to other clients. A second Release must
+// retry it, so a caller with shutdown budget left can still clean up.
+func TestReleaseCanBeRetriedAfterAFailedDelete(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	ctx := context.Background()
+
+	state, err := h.store.ReadState(ctx)
+	require.NoError(t, err)
+
+	holder, err := syncer.AcquireLease(ctx, h.store, state, "release-twice-client", time.Hour, false)
+	require.NoError(t, err)
+
+	var failDelete atomic.Bool
+
+	failDelete.Store(true)
+
+	h.api.beforeDelete = func([]string) error {
+		if failDelete.Load() {
+			return errors.New("simulated delete failure")
+		}
+
+		return nil
+	}
+
+	require.Error(t, holder.Release(ctx), "a failed delete must be reported")
+	assert.Len(t, h.lockNames(), 1, "the lease is still there after the failed release")
+
+	failDelete.Store(false)
+
+	require.NoError(t, holder.Release(ctx))
+	assert.Empty(t, h.lockNames(), "the second Release must delete what the first one could not")
+}
+
 // A renewal that hangs must give up within one renewal interval, so the next attempt starts
 // while a third of the lease is still left. A timeout of the lease's whole remaining validity
 // would end it at the expiry, and no second attempt would fit.
