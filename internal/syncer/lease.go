@@ -397,7 +397,9 @@ func (h *LeaseHolder) write(ctx context.Context) error {
 		// renewal and the release rather than leave a live lease nobody tracks. A conflict is the
 		// exception: the commit was rejected whole because the name existed before it, so the
 		// object is someone else's and must stay. A retry of a commit that landed does not come
-		// back as a conflict: the service answers 422, "the stage can't be applied twice".
+		// back as a conflict: the service answers 422, "the stage can't be applied twice". A commit
+		// the service is still applying when the delete runs can land afterwards. That lease
+		// expires on its own, like any lease a crashed process leaves behind.
 		if !drapi.IsConflict(err) {
 			h.superseded = append(h.superseded, name)
 		}

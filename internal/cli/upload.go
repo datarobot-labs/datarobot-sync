@@ -106,7 +106,7 @@ func (u *uploadFlags) register(cmd *cobra.Command, deleteDefault bool) {
 	flags.Float64Var(&u.compactThreshold, "compact-threshold", syncer.DefaultCompactThreshold,
 		"live fraction below which a pack is worth rewriting")
 	flags.BoolVar(&u.noLock, "no-lock", false, "do not take an advisory lease")
-	flags.DurationVar(&u.leaseTTL, "lease-ttl", 0, "how long the lease is honoured (default 30m)")
+	flags.DurationVar(&u.leaseTTL, "lease-ttl", 0, "how long the lease is honoured, renewed every third of it (default 30m; under 30s a renewal may not finish in time)")
 	flags.BoolVar(&u.force, "force", false, "ignore a foreign lease and a moved head")
 }
 
