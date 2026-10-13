@@ -16,7 +16,7 @@
 
 services:
   watch:
-    image: ghcr.io/datarobot/dr-sync:latest
+    image: ghcr.io/datarobot-labs/dr-sync:latest
     command: ["watch", "/tmp/data", "--delete", "--verbose"]
     restart: unless-stopped
     volumes:

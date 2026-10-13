@@ -26,8 +26,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
-	"github.com/datarobot/golang-datarobot-filesync/internal/scan"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/scan"
 )
 
 // blobFrom writes content to a scratch file and describes it as a blob.

@@ -34,11 +34,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/config"
-	"github.com/datarobot/golang-datarobot-filesync/internal/drapi"
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
-	"github.com/datarobot/golang-datarobot-filesync/internal/progress"
-	"github.com/datarobot/golang-datarobot-filesync/internal/syncer"
+	"github.com/datarobot-labs/datarobot-sync/internal/config"
+	"github.com/datarobot-labs/datarobot-sync/internal/drapi"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/progress"
+	"github.com/datarobot-labs/datarobot-sync/internal/syncer"
 )
 
 // live holds a client and a scratch container that is deleted when the test ends.

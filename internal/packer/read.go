@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
-	"github.com/datarobot/golang-datarobot-filesync/internal/scan"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/scan"
 )
 
 // Member is one blob encountered while reading a pack.

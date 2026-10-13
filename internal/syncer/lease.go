@@ -26,8 +26,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/drapi"
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/drapi"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
 )
 
 // DefaultLeaseTTL is how long a lease is honoured before it is treated as abandoned.

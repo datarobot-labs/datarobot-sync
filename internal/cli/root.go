@@ -22,8 +22,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/config"
-	"github.com/datarobot/golang-datarobot-filesync/internal/version"
+	"github.com/datarobot-labs/datarobot-sync/internal/config"
+	"github.com/datarobot-labs/datarobot-sync/internal/version"
 )
 
 // NewRoot builds the command tree.

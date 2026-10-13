@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
 )
 
 // tree writes a fixture directory and returns its root.

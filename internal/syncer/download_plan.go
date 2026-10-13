@@ -19,9 +19,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
-	"github.com/datarobot/golang-datarobot-filesync/internal/packer"
-	"github.com/datarobot/golang-datarobot-filesync/internal/scan"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/packer"
+	"github.com/datarobot-labs/datarobot-sync/internal/scan"
 )
 
 // plan decides what a pull has to do, before anything is transferred.

@@ -26,8 +26,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/drapi"
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/drapi"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
 )
 
 // Store is a container viewed through dr-sync's layout: manifests, packs and leases under a

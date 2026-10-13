@@ -27,7 +27,7 @@ import (
 
 	"github.com/ulikunitz/xz"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/version"
+	"github.com/datarobot-labs/datarobot-sync/internal/version"
 )
 
 // maxManifestBytes bounds how much a decoder will expand, so a hostile or corrupt object

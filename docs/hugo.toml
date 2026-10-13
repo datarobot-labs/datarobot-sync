@@ -1,4 +1,4 @@
-baseURL = 'https://datarobot.github.io/golang-datarobot-filesync/'
+baseURL = 'https://datarobot-labs.github.io/datarobot-sync/'
 locale = 'en-us'
 title = 'dr-sync'
 theme = []
@@ -30,7 +30,7 @@ enableGitInfo = true
     displayLogo = false
   [params.editURL]
     enable = true
-    base = 'https://github.com/datarobot/golang-datarobot-filesync/edit/main/docs/content'
+    base = 'https://github.com/datarobot-labs/datarobot-sync/edit/main/docs/content'
   [params.footer]
     displayCopyright = false
     displayPoweredBy = true
@@ -48,7 +48,7 @@ enableGitInfo = true
 
 [[menu.main]]
   name = 'GitHub'
-  url = 'https://github.com/datarobot/golang-datarobot-filesync'
+  url = 'https://github.com/datarobot-labs/datarobot-sync'
   weight = 3
   [menu.main.params]
     icon = 'github'

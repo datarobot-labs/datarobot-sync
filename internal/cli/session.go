@@ -24,12 +24,12 @@ import (
 	"github.com/spf13/pflag"
 	"golang.org/x/term"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/config"
-	"github.com/datarobot/golang-datarobot-filesync/internal/drapi"
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
-	"github.com/datarobot/golang-datarobot-filesync/internal/progress"
-	"github.com/datarobot/golang-datarobot-filesync/internal/scan"
-	"github.com/datarobot/golang-datarobot-filesync/internal/syncer"
+	"github.com/datarobot-labs/datarobot-sync/internal/config"
+	"github.com/datarobot-labs/datarobot-sync/internal/drapi"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/progress"
+	"github.com/datarobot-labs/datarobot-sync/internal/scan"
+	"github.com/datarobot-labs/datarobot-sync/internal/syncer"
 )
 
 // globalFlags are the persistent flags every subcommand shares.

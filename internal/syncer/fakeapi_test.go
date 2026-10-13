@@ -32,7 +32,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/drapi"
+	"github.com/datarobot-labs/datarobot-sync/internal/drapi"
 )
 
 // fakeAPI is an in-memory stand-in for the DataRobot Files API.

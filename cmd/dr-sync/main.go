@@ -21,7 +21,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/cli"
+	"github.com/datarobot-labs/datarobot-sync/internal/cli"
 )
 
 func main() {

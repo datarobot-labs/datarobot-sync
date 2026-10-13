@@ -24,10 +24,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/config"
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
-	"github.com/datarobot/golang-datarobot-filesync/internal/progress"
-	"github.com/datarobot/golang-datarobot-filesync/internal/syncer"
+	"github.com/datarobot-labs/datarobot-sync/internal/config"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/progress"
+	"github.com/datarobot-labs/datarobot-sync/internal/syncer"
 )
 
 func newInitCommand(global *globalFlags) *cobra.Command {

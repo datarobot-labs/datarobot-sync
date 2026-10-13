@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/scan"
+	"github.com/datarobot-labs/datarobot-sync/internal/scan"
 )
 
 // testTimeout is generous relative to the debounce window every test below configures, so real

@@ -4,7 +4,7 @@ weight = 5
 +++
 
 Runnable companions to [Quick Start]({{% relref "docs/quick-start" %}}) §4, in
-[`examples/`](https://github.com/datarobot/golang-datarobot-filesync/tree/main/examples).
+[`examples/`](https://github.com/datarobot-labs/datarobot-sync/tree/main/examples).
 None of these need credentials written into them — `dr-sync` resolves
 `DATAROBOT_ENDPOINT`/`DATAROBOT_API_TOKEN` itself, environment first, then
 `~/.config/datarobot/drconfig.yaml` (the file `dr auth login` writes). `DR_SYNC_CATALOG_ID`
@@ -13,16 +13,16 @@ in a couple of these, as a placeholder to replace.
 
 | | |
 |---|---|
-| [`Taskfile.yml`](https://github.com/datarobot/golang-datarobot-filesync/blob/main/examples/Taskfile.yml) | `sync:push` / `sync:pull` / `sync:watch` / `sync:compact` / `sync:gc` targets to copy into a project |
-| [`docker/`](https://github.com/datarobot/golang-datarobot-filesync/tree/main/examples/docker) | a resident `watch` container and a periodic-push cron container, both tested live against a real container |
-| [`systemd/`](https://github.com/datarobot/golang-datarobot-filesync/tree/main/examples/systemd) | the same two shapes as native user-level systemd units (Linux) |
-| [`launchd/`](https://github.com/datarobot/golang-datarobot-filesync/tree/main/examples/launchd) | the resident-`watch` shape as a per-user LaunchAgent (macOS) |
+| [`Taskfile.yml`](https://github.com/datarobot-labs/datarobot-sync/blob/main/examples/Taskfile.yml) | `sync:push` / `sync:pull` / `sync:watch` / `sync:compact` / `sync:gc` targets to copy into a project |
+| [`docker/`](https://github.com/datarobot-labs/datarobot-sync/tree/main/examples/docker) | a resident `watch` container and a periodic-push cron container, both tested live against a real container |
+| [`systemd/`](https://github.com/datarobot-labs/datarobot-sync/tree/main/examples/systemd) | the same two shapes as native user-level systemd units (Linux) |
+| [`launchd/`](https://github.com/datarobot-labs/datarobot-sync/tree/main/examples/launchd) | the resident-`watch` shape as a per-user LaunchAgent (macOS) |
 
 ## Docker
 
 Two shapes, side by side in `docker-compose.yml`:
 
-- **`watch` — resident mirror.** Runs the published `ghcr.io/datarobot/dr-sync` image
+- **`watch` — resident mirror.** Runs the published `ghcr.io/datarobot-labs/dr-sync` image
   directly with a different argv; no custom image needed. Docker's
   `restart: unless-stopped` is the supervisor.
 - **`cron-backup` — periodic snapshot push.** A scheduled `dr-sync upload`, built from

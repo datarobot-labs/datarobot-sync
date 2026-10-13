@@ -14,7 +14,7 @@
 ARG DR_SYNC_VERSION=latest
 ARG SUPERCRONIC_VERSION=v0.2.49
 
-FROM ghcr.io/datarobot/dr-sync:${DR_SYNC_VERSION} AS dr-sync
+FROM ghcr.io/datarobot-labs/dr-sync:${DR_SYNC_VERSION} AS dr-sync
 
 # go install verifies the module against the Go checksum database, so this needs no manually
 # pinned release hash the way curling a binary release would.

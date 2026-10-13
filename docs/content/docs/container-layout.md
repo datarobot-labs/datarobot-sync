@@ -41,4 +41,4 @@ its compressed size exceeds `--slice-size`, which is what removes the file-size
 ceiling on a single blob.
 
 For the full manifest schema, field-by-field, see
-[SPEC.md](https://github.com/datarobot/golang-datarobot-filesync/blob/main/SPEC.md#content-addressed-packs-immutable-manifests).
+[SPEC.md](https://github.com/datarobot-labs/datarobot-sync/blob/main/SPEC.md#content-addressed-packs-immutable-manifests).

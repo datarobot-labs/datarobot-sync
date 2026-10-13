@@ -566,7 +566,7 @@ with goreleaser OSS v2 (2.15.4 locally supports it).
 - `.goreleaser.yaml`: `version: 2`, `project_name: dr-sync`; builds for linux/darwin/windows
   × amd64/arm64 plus linux/riscv64 (plugin convention), `CGO_ENABLED=0`,
   `mod_timestamp: "{{ .CommitTimestamp }}"`, ldflags into `internal/version`; tar.gz archives
-  with a zip override for windows; `checksum`; `dockers_v2` → `ghcr.io/datarobot/dr-sync`,
+  with a zip override for windows; `checksum`; `dockers_v2` → `ghcr.io/datarobot-labs/dr-sync`,
   tags `{{ .Version }}` and `{{ if not .Prerelease }}latest{{ end }}`, platforms
   linux/amd64 + linux/arm64, OCI labels.
 - `Dockerfile.goreleaser`: `FROM cgr.dev/chainguard/static:latest`, `ARG TARGETPLATFORM`,

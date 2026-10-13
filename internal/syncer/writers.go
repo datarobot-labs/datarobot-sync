@@ -26,9 +26,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/drapi"
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
-	"github.com/datarobot/golang-datarobot-filesync/internal/version"
+	"github.com/datarobot-labs/datarobot-sync/internal/drapi"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/version"
 )
 
 // DefaultWriterTTL is how long a resident writer's registry entry is honoured before another

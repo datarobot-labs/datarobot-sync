@@ -30,7 +30,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/version"
+	"github.com/datarobot-labs/datarobot-sync/internal/version"
 )
 
 // Config describes how to reach a DataRobot instance.
@@ -108,7 +108,7 @@ func New(cfg Config) (*Client, error) {
 		maxRetries = defaultMaxRetries
 	}
 
-	userAgent := fmt.Sprintf("dr-sync/%s (+https://github.com/datarobot/golang-datarobot-filesync)", version.Short())
+	userAgent := fmt.Sprintf("dr-sync/%s (+https://github.com/datarobot-labs/datarobot-sync)", version.Short())
 	if cfg.UserAgentSuffix != "" {
 		userAgent += " " + cfg.UserAgentSuffix
 	}

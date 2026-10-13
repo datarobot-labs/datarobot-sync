@@ -27,10 +27,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/datarobot/golang-datarobot-filesync/internal/manifest"
-	"github.com/datarobot/golang-datarobot-filesync/internal/progress"
-	"github.com/datarobot/golang-datarobot-filesync/internal/scan"
-	"github.com/datarobot/golang-datarobot-filesync/internal/syncer"
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
+	"github.com/datarobot-labs/datarobot-sync/internal/progress"
+	"github.com/datarobot-labs/datarobot-sync/internal/scan"
+	"github.com/datarobot-labs/datarobot-sync/internal/syncer"
 )
 
 // harness is a fake API plus a container ready to sync into.
