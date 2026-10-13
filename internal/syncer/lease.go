@@ -40,16 +40,18 @@ import (
 // where two CI jobs push the same tree, not to fence anything.
 const DefaultLeaseTTL = 30 * time.Minute
 
-// leaseRenewalsPerTTL is how many renewal attempts fit in one TTL.
-const leaseRenewalsPerTTL = 3
+const (
+	// leaseRenewalsPerTTL is how many renewal attempts fit in one TTL.
+	leaseRenewalsPerTTL = 3
 
-// leaseReleaseTimeout bounds the cleanup that drops a lease after the run that took it ended,
-// including a run that was interrupted.
-const leaseReleaseTimeout = 30 * time.Second
+	// leaseReleaseTimeout bounds the cleanup that drops a lease after the run that took it ended,
+	// including a run that was interrupted.
+	leaseReleaseTimeout = 30 * time.Second
 
-// leaseRenewTimeout bounds one renewal, so a hung request cannot stall the end of an upload. A
-// lease with a short TTL bounds it further, see renewTimeout.
-const leaseRenewTimeout = 30 * time.Second
+	// leaseRenewTimeout bounds one renewal, so a hung request cannot stall the end of an upload. A
+	// lease with a short TTL bounds it further, see renewTimeout.
+	leaseRenewTimeout = 30 * time.Second
+)
 
 // renewTimeout is how long one renewal may run: one renewal interval. A hung attempt then ends
 // before the next tick, so a second attempt starts with a third of the lease left, and no
