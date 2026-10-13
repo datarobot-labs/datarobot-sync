@@ -17,13 +17,16 @@ package syncer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/user"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/datarobot-labs/datarobot-sync/internal/drapi"
@@ -36,6 +39,26 @@ import (
 // a lease that expires early is worse than one that lingers — the point is to catch the case
 // where two CI jobs push the same tree, not to fence anything.
 const DefaultLeaseTTL = 30 * time.Minute
+
+const (
+	// leaseRenewalsPerTTL is how many renewal attempts fit in one TTL.
+	leaseRenewalsPerTTL = 3
+
+	// leaseReleaseTimeout bounds the cleanup that drops a lease after the run that took it ended,
+	// including a run that was interrupted.
+	leaseReleaseTimeout = 30 * time.Second
+
+	// leaseRenewTimeout bounds one renewal, so a hung request cannot stall the end of an upload. A
+	// lease with a short TTL bounds it further, see renewTimeout.
+	leaseRenewTimeout = 30 * time.Second
+)
+
+// renewTimeout is how long one renewal may run: one renewal interval. A hung attempt then ends
+// before the next tick, so a second attempt starts with a third of the lease left, and no
+// attempt runs past the expiry of the lease it extends.
+func (h *LeaseHolder) renewTimeout() time.Duration {
+	return min(leaseRenewTimeout, h.ttl/leaseRenewalsPerTTL)
+}
 
 // Lease is an advisory claim on a container, written as an object under the locks prefix.
 //
@@ -168,6 +191,9 @@ type LeaseHolder struct {
 	sequence int
 	// current is the object name of the lease this process most recently wrote.
 	current string
+	// superseded holds older leases whose deletion failed. They stay visible to other clients
+	// until they expire, so every later renewal and the release retry them.
+	superseded []string
 }
 
 // AcquireLease claims the container, refusing if someone else holds an unexpired lease.
@@ -183,6 +209,15 @@ func AcquireLease(ctx context.Context, store *Store, state *State, clientID stri
 	holder := &LeaseHolder{store: store, clientID: clientID, ttl: ttl, sequence: ownMaxSequence(state.Leases, clientID)}
 
 	if err := holder.write(ctx); err != nil {
+		// The claim may have landed despite the error. Clean up with a context that survives
+		// the one that just failed.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseReleaseTimeout)
+		defer cancel()
+
+		if releaseErr := holder.Release(cleanupCtx); releaseErr != nil {
+			return nil, errors.Join(err, releaseErr)
+		}
+
 		return nil, err
 	}
 
@@ -213,6 +248,10 @@ func ownMaxSequence(leases []Lease, clientID string) int {
 }
 
 // Renew extends the lease by writing the next heartbeat and dropping the previous one.
+//
+// The new heartbeat is recorded before the old one is deleted. If the delete fails, the old
+// object is remembered and deleted on the next renewal or at Release, so a transient failure
+// cannot leave a live lease behind that refuses another client for a whole TTL.
 func (h *LeaseHolder) Renew(ctx context.Context) error {
 	previous := h.current
 
@@ -220,30 +259,101 @@ func (h *LeaseHolder) Renew(ctx context.Context) error {
 		return err
 	}
 
-	if previous == "" {
+	if previous != "" {
+		h.superseded = append(h.superseded, previous)
+	}
+
+	return h.dropSuperseded(ctx)
+}
+
+// dropSuperseded deletes the leases this process has replaced, keeping the ones that fail.
+func (h *LeaseHolder) dropSuperseded(ctx context.Context) error {
+	if len(h.superseded) == 0 {
 		return nil
 	}
 
-	_, err := h.store.Delete(ctx, []string{previous})
+	if _, err := h.store.Delete(ctx, h.superseded); err != nil {
+		return fmt.Errorf("dropping the previous lease: %w", err)
+	}
 
-	return err
+	h.superseded = nil
+
+	return nil
 }
 
-// Release drops the lease and reports whether it managed to.
+// KeepAlive renews the lease every third of its TTL until the returned stop function runs.
+//
+// A renewal that fails is passed to onError and retried on the next tick rather than ending the
+// loop, so one failure still leaves a second attempt inside the TTL. A renewal always runs to
+// completion, bounded by renewTimeout, not by ctx or stop: abandoning one mid-flight
+// can leave the new lease written but unrecorded, and Release would then miss it. The stop
+// function waits for a renewal in flight, so call it before Release; the two share the
+// holder's state. A nil holder (locking disabled), or one whose TTL is too short to split into
+// renewals, returns a stop function that does nothing.
+func (h *LeaseHolder) KeepAlive(ctx context.Context, onError func(error)) (stop func()) {
+	if h == nil || h.ttl/leaseRenewalsPerTTL <= 0 {
+		return func() {}
+	}
+
+	quit := make(chan struct{})
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		ticker := time.NewTicker(h.ttl / leaseRenewalsPerTTL)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-quit:
+				return
+			case <-ticker.C:
+				renewCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), h.renewTimeout())
+				err := h.Renew(renewCtx)
+
+				cancel()
+
+				if err != nil {
+					onError(err)
+				}
+			}
+		}
+	}()
+
+	var once sync.Once
+
+	return func() {
+		once.Do(func() { close(quit) })
+		<-done
+	}
+}
+
+// Release drops the lease and reports whether it managed to. After an error the holder keeps
+// the names it could not delete, so calling Release again retries them.
 //
 // A caller should warn rather than fail on an error: a lease left behind expires on its own,
 // and failing a completed sync because a cleanup call did not land would be the wrong trade.
 func (h *LeaseHolder) Release(ctx context.Context) error {
-	if h == nil || h.current == "" {
+	if h == nil {
 		return nil
 	}
 
-	name := h.current
-	h.current = ""
-
-	if _, err := h.store.Delete(ctx, []string{name}); err != nil {
-		return fmt.Errorf("releasing the lease on %s: %w", name, err)
+	names := slices.Clone(h.superseded)
+	if h.current != "" {
+		names = append(names, h.current)
 	}
+
+	if len(names) == 0 {
+		return nil
+	}
+
+	if _, err := h.store.Delete(ctx, names); err != nil {
+		return fmt.Errorf("releasing the lease on %s: %w", strings.Join(names, ", "), err)
+	}
+
+	h.current = ""
+	h.superseded = nil
 
 	return nil
 }
@@ -284,6 +394,18 @@ func (h *LeaseHolder) write(ctx context.Context) error {
 	object := Object{Name: name, Content: content, Size: int64(len(content))}
 
 	if err := h.store.Commit(ctx, nil, []Object{object}, CommitOptions{Overwrite: drapi.OverwriteError}); err != nil {
+		// A failed commit may still have landed, for example when the response arrives after a
+		// timeout. Deleting a name that does not exist is harmless, so remember it for the next
+		// renewal and the release rather than leave a live lease nobody tracks. A conflict is the
+		// exception: the commit was rejected whole because the name existed before it, so the
+		// object is someone else's and must stay. A retry of a commit that landed does not come
+		// back as a conflict: the service answers 422, "the stage can't be applied twice". A commit
+		// the service is still applying when the delete runs can land afterwards. That lease
+		// expires on its own, like any lease a crashed process leaves behind.
+		if !drapi.IsConflict(err) {
+			h.superseded = append(h.superseded, name)
+		}
+
 		return fmt.Errorf("claiming the container: %w", err)
 	}
 

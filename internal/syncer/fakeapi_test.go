@@ -56,6 +56,11 @@ type fakeAPI struct {
 	// hooks let a test interrupt the API at a specific moment.
 	beforeCommit func(stageID string, names []string) error
 	onListFiles  func()
+	// beforeDelete runs before a delete is applied; an error fails the request.
+	beforeDelete func(paths []string) error
+	// afterCommit runs once a commit has been applied and before the response is sent, so a
+	// test can make the server answer late and the client give up on a commit that landed.
+	afterCommit func(names []string)
 }
 
 type fakeContainer struct {
@@ -395,6 +400,10 @@ func (a *fakeAPI) commitStage(t *testing.T, w http.ResponseWriter, r *http.Reque
 	a.nextID++
 	container.versionID = fmt.Sprintf("%s-v%d", id, a.nextID)
 
+	if a.afterCommit != nil {
+		a.afterCommit(names)
+	}
+
 	writeJSON(t, w, http.StatusOK, map[string]any{
 		"catalogId":        id,
 		"catalogVersionId": container.versionID,
@@ -501,6 +510,14 @@ func (a *fakeAPI) deletePaths(t *testing.T, w http.ResponseWriter, r *http.Reque
 		http.Error(w, `{"message":"bad body"}`, http.StatusBadRequest)
 
 		return
+	}
+
+	if a.beforeDelete != nil {
+		if err := a.beforeDelete(body.Paths); err != nil {
+			writeJSON(t, w, http.StatusServiceUnavailable, map[string]string{"message": err.Error()})
+
+			return
+		}
 	}
 
 	a.mu.Lock()
