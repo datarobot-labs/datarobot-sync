@@ -1,15 +1,16 @@
 +++
-title = 'dr-sync'
+title = 'datarobot-sync'
 layout = 'hextra-home'
 +++
 
-{{< hextra/hero-badge >}}
-  <div class="hx:w-2 hx:h-2 hx:rounded-full hx:bg-primary-400"></div>
-  <span>Also a `dr` CLI plugin</span>
+{{< hextra/hero-badge link="https://cli.datarobot.com" >}}
+Also a DataRobot CLI plugin
 {{< /hextra/hero-badge >}}
 {{< hextra/hero-badge >}}
-  <div class="hx:w-2 hx:h-2 hx:rounded-full hx:bg-primary-400"></div>
-  <span>Works with DataRobot 11.4+</span>
+Built for always-on agents
+{{< /hextra/hero-badge >}}
+{{< hextra/hero-badge >}}
+Works with DataRobot 11.4+
 {{< /hextra/hero-badge >}}
 
 <div class="hx:mt-6 hx:mb-6">
@@ -20,39 +21,56 @@ layout = 'hextra-home'
 
 <div class="hx:mb-12">
 {{< hextra/hero-subtitle >}}
-  A single static Go binary that makes a local directory and a DataRobot Files&nbsp;<br class="hx:sm:block hx:hidden" />container match, transferring only the difference, xz-compressed
+  An always-on agent that forgets everything on restart isn't always on.&nbsp;<br class="hx:sm:block hx:hidden" />datarobot-sync keeps its skills and memories in DataRobot Files and moves only what changed
 {{< /hextra/hero-subtitle >}}
 </div>
 
 <div class="hx:mb-6">
-{{< hextra/hero-button text="Read the docs" link="docs" >}}
+{{< hextra/hero-button text="Read the docs" link="docs/quick-start" >}}
+{{< hextra/hero-button text="Run an always-on agent" link="docs/agent-harnesses" style="margin-left:0.75rem" >}}
 </div>
 
 <div class="hx:mt-6"></div>
 
 {{< hextra/feature-grid >}}
   {{< hextra/feature-card
-    title="Nothing unchanged is re-sent"
-    subtitle="The Files API records a SHA-256 for every stored object, so the diff is exact rather than heuristic."
+    title="Agents keep their memory"
+    subtitle="Restore skills, memories, and sessions on boot. A restart, a reschedule, or a new node doesn't wipe what the agent learned."
+    link="docs/agent-harnesses"
   >}}
   {{< hextra/feature-card
-    title="Renames and reverts are free"
-    subtitle="Content is stored under its own digest, so moving a 5 GB file is a manifest edit, not a transfer."
+    title="Roll back a bad write"
+    subtitle="Nothing in the container is ever overwritten. Retain a day of generations, and a corrupted memory is a rollback, not a loss."
+    link="docs/agent-harnesses"
   >}}
   {{< hextra/feature-card
-    title="No-op runs stay fast"
-    subtitle="The remote manifest records size, mode and mtime per path, the same baseline rsync gets from its destination."
+    title="Exit codes a supervisor can act on"
+    subtitle="Authentication failures, lease conflicts, and integrity errors each get their own code, so an entrypoint knows whether to retry, stop, or alert."
+    link="docs/exit-codes"
   >}}
   {{< hextra/feature-card
-    title="Batched, not one file at a time"
-    subtitle="A thousand small files go up as a handful of xz-compressed packs instead of a thousand round trips."
+    title="Only the difference moves"
+    subtitle="The Files API records a SHA-256 for every stored object, so the diff is exact. Unchanged files never leave the disk."
   >}}
   {{< hextra/feature-card
-    title="A resident watch mode"
-    subtitle="`dr-sync watch` keeps a container mirrored as files change, debounced and rate-limited so a busy tree behaves."
+    title="Renames and reverts cost nothing"
+    subtitle="Content is stored under its own digest. Moving a 5 GB file is a manifest edit, not a transfer."
   >}}
   {{< hextra/feature-card
-    title="Ships as a `dr` plugin"
-    subtitle="Everything works equally as `dr sync upload ./dir`, or as a standalone binary, or as a container."
+    title="Idle runs stay fast"
+    subtitle="The remote manifest records size, mode, and mtime per path, the same baseline rsync gets from its destination."
+  >}}
+  {{< hextra/feature-card
+    title="Packs, not round trips"
+    subtitle="A thousand small files go up as a handful of xz-compressed packs instead of a thousand requests."
+  >}}
+  {{< hextra/feature-card
+    title="Mirror as files change"
+    subtitle="`dr-sync watch` keeps a container current while a busy tree churns, debounced and rate-limited."
+  >}}
+  {{< hextra/feature-card
+    title="Runs as a DataRobot CLI plugin"
+    subtitle="Use `datarobot sync upload ./dir`, a standalone binary, or a container. The behavior is identical."
+    link="https://cli.datarobot.com"
   >}}
 {{< /hextra/feature-grid >}}

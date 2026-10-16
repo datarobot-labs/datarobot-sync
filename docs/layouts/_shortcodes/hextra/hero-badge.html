@@ -23,5 +23,6 @@ are static labels, not links, so a hover affordance is misleading.
   {{ with $style }}style="{{ . | safeCSS }}"{{ end }}
   {{ if $external }}target="_blank" rel="noreferrer"{{ end -}}
 >
-  {{ .Inner | markdownify }}
+  <span class="hx:w-2 hx:h-2 hx:rounded-full hx:bg-primary-400"></span>
+  <span>{{ .Inner | $.Page.RenderString }}</span>
 </a>

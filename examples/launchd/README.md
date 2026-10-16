@@ -13,7 +13,7 @@ cp com.datarobot.dr-sync.watch.plist ~/Library/LaunchAgents/
 ```
 
 Edit the copy: replace `REPLACE_WITH_THE_DIRECTORY_TO_MIRROR` and
-`REPLACE_WITH_YOUR_CONTAINER_ID`, and confirm `/usr/local/bin/dr-sync` matches where dr-sync
+`REPLACE_WITH_YOUR_CONTAINER_ID`, and confirm `/usr/local/bin/dr-sync` matches where datarobot-sync
 actually is (`which dr-sync`).
 
 ```sh

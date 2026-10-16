@@ -1,6 +1,6 @@
 baseURL = 'https://datarobot-labs.github.io/datarobot-sync/'
 locale = 'en-us'
-title = 'dr-sync'
+title = 'datarobot-sync'
 theme = []
 
 # Site content lives directly under content/ (no i18n subfolders needed).
@@ -21,7 +21,7 @@ enableGitInfo = true
     noClasses = false
 
 [params]
-  description = 'rsync for the DataRobot Files API — dr-sync documentation.'
+  description = 'rsync for the DataRobot Files API. Persist AI agent skills and memories across restarts for always-on agent harnesses like Hermes and OpenClaw.'
   [params.theme]
     default = 'dark'
     displayToggle = true
@@ -37,7 +37,7 @@ enableGitInfo = true
 
 [[menu.main]]
   name = 'Docs'
-  pageRef = '/docs'
+  pageRef = '/docs/quick-start'
   weight = 1
 
 [[menu.main]]

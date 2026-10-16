@@ -1,12 +1,12 @@
 +++
-title = 'Concurrency and Garbage Collection'
+title = 'Concurrency and garbage collection'
 weight = 8
 +++
 
 ## Concurrency: what is guaranteed, what is not
 
 Two clients pushing to one container is guarded, not prevented: the API has no
-compare-and-swap. `dr-sync` takes an advisory lease, revalidates immediately before
+compare-and-swap. datarobot-sync takes an advisory lease, revalidates immediately before
 committing, and reports a fork afterwards if one happened. A genuine simultaneous push
 means one side's update is not in the head — detected, never silently corrupted, and
 healed by re-running.
@@ -38,9 +38,9 @@ from the manifest alone, with no network call.
 - **Tier 1 (free):** `liveRatio == 0` → deletable with no data movement. Runs
   automatically after every successful commit, subject to a grace period and no live
   foreign lease. Handles most garbage, because pack contents correlate with a single
-  push. `dr-sync gc` runs tier-1 only — no local walk, fast, scriptable in CI.
+  push. `datarobot sync gc` runs tier-1 only — no local walk, fast, scriptable in CI.
 - **Tier 2 (expensive):** `0 < liveRatio < --compact-threshold` (default 0.5) needs live
-  members rewritten into a fresh pack. Never automatic. `dr-sync compact <path>` runs
+  members rewritten into a fresh pack. Never automatic. `datarobot sync compact <path>` runs
   from the local tree: after hashing, most live members are already present locally, so
   on a machine with a current checkout, compaction usually downloads nothing.
 
@@ -51,5 +51,5 @@ newer manifest might still reference.
 A resident `watch` session changes the *shape* of the garbage, not the mechanism: many
 small pushes produce many mostly-live packs that tier-1's `liveRatio == 0` rule cannot
 reclaim, so dead weight accrues over a long session and wants an occasional
-`dr-sync compact` — exactly what the compaction hint in `watch`'s own output suggests
+`datarobot sync compact` — exactly what the compaction hint in `watch`'s own output suggests
 when dead bytes exceed the threshold.

@@ -11,9 +11,9 @@ weight = 6
 | Config file | `--config` | `DATAROBOT_CONFIG` |
 
 Precedence is flag, then environment, then config file. Under the `dr` CLI the endpoint
-and token arrive already validated; standalone, `dr-sync` falls back to
+and token arrive already validated; standalone, datarobot-sync falls back to
 `~/.config/datarobot/drconfig.yaml` — the same file `dr auth login` writes. Because the
-flag names double as config keys, that file can also carry `dr-sync`'s own settings:
+flag names double as config keys, that file can also carry settings for datarobot-sync:
 
 ```yaml
 endpoint: https://app.datarobot.com/api/v2

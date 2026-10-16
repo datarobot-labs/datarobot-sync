@@ -1,9 +1,9 @@
 +++
-title = 'Container Layout'
+title = 'Container layout'
 weight = 7
 +++
 
-`dr-sync` does not store your files at their own paths. Everything lives under a
+datarobot-sync does not store your files at their own paths. Everything lives under a
 reserved prefix as immutable objects:
 
 ```
@@ -14,11 +14,11 @@ reserved prefix as immutable objects:
 ```
 
 That is a deliberate trade. DataRobot's intake cannot unpack xz, so genuine LZMA2
-compression means `dr-sync` owns the layout on both sides. The container is not
+compression means datarobot-sync owns the layout on both sides. The container is not
 browsable as files; in exchange the transfer is compressed, deduplicated, and
-resumable. `dr-sync ls` shows the tree without downloading anything.
+resumable. `datarobot sync ls` shows the tree without downloading anything.
 
-Nothing in the container is ever overwritten, and the current manifest is simply the
+Nothing in the container is ever overwritten, and the current manifest is the
 highest-numbered one — which is what makes an interrupted push invisible rather than
 corrupting.
 

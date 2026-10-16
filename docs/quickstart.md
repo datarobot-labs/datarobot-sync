@@ -10,7 +10,7 @@ See [`../README.md`](../README.md) for install options and the full flag referen
 
 ## 1. Credentials — nothing to configure if you already ran `dr auth login`
 
-dr-sync resolves the endpoint and token itself, in this order:
+datarobot-sync resolves the endpoint and token itself, in this order:
 
 1. `--endpoint` (there is no `--token` flag, deliberately — a flag would put it in the
    process table and the shell history)
@@ -23,7 +23,7 @@ is nothing to set up — every example below was tested with **no environment va
 all**, credentials coming entirely from that file:
 
 ```sh
-env -i HOME="$HOME" PATH="$PATH" dr-sync init --name "my-project"
+env -i HOME="$HOME" PATH="$PATH" datarobot sync init --name "my-project"
 ```
 
 For a CI job or a container, set the three environment variables instead — see
@@ -32,14 +32,14 @@ For a CI job or a container, set the three environment variables instead — see
 ## 2. Create a container and push
 
 ```sh
-$ dr-sync init --name "dr-sync-quickstart"
+$ datarobot sync init --name "dr-sync-quickstart"
 create  container 0123456789abcdef01234567
 seed    0000000000-e67a202c written
 done    container ready
 0123456789abcdef01234567
 
 export DR_SYNC_CATALOG_ID=0123456789abcdef01234567
-dr-sync upload <path>
+datarobot sync upload <path>
 ```
 
 The last two lines above are `init` suggesting the next step, not something you typed —
@@ -49,7 +49,7 @@ for the rest of the shell session, put it in a project's `.envrc`, or bake it in
 
 ```sh
 $ export DR_SYNC_CATALOG_ID=0123456789abcdef01234567
-$ dr-sync upload ./my-project
+$ datarobot sync upload ./my-project
 remote  empty container; this will be generation 0
 scan    142 entries  hashed 138 (4.2 MiB)  reused 0
 plan    new 138  changed 0  unchanged 0  remote-only 0
@@ -62,7 +62,7 @@ done    0000000000-e67a202c  1.1 MiB uploaded (3.8x from 4.2 MiB)
 Pull it back somewhere else, and confirm it round-trips exactly:
 
 ```sh
-$ dr-sync download ./restored
+$ datarobot sync download ./restored
 remote  generation 0  138 files  4.2 MiB  3 packs
 scan    up-to-date 0  stale/missing 138  extraneous 0
 plan    138 files from 3 packs (~1.1 MiB to transfer)
@@ -77,12 +77,12 @@ $ echo $?
 
 ## 3. A local dev loop
 
-Running `dr-sync upload` in a loop yourself pays for process startup, config resolution and a
-fresh connection every time. `dr-sync watch` stays resident and pushes only when the tree
+Running `datarobot sync upload` in a loop yourself pays for process startup, config resolution and a
+fresh connection every time. `datarobot sync watch` stays resident and pushes only when the tree
 actually settles:
 
 ```sh
-$ dr-sync watch ./my-project --verbose
+$ datarobot sync watch ./my-project --verbose
 ```
 
 `--delete` defaults **on** for `watch` — unlike `upload`, which stays additive — because watch
@@ -156,7 +156,7 @@ docker compose up -d
 
 ### As a local service, no container
 
-If dr-sync is already installed on the machine that should stay synced (`task install:local`,
+If datarobot-sync is already installed on the machine that should stay synced (`task install:local`,
 or a release binary on `PATH`), running it as a systemd service or a macOS LaunchAgent needs no
 credentials in the unit file at all — it inherits the same `~/.config/datarobot/drconfig.yaml`
 fallback described in [§1](#1-credentials--nothing-to-configure-if-you-already-ran-dr-auth-login):
@@ -194,12 +194,12 @@ run as the user who owns the crontab, so `$HOME` resolves the same way it does i
 ## 5. Checking on it
 
 ```sh
-dr-sync inspect --packs      # generations, dead bytes, what compact would reclaim
-dr-sync ls --generation 3    # what an older push looked like, no download
-dr-sync compact ./my-project # reclaim dead bytes from a churny watch session
-dr-sync gc                   # tier-1 cleanup only, safe to run from CI on a timer
+datarobot sync inspect --packs      # generations, dead bytes, what compact would reclaim
+datarobot sync ls --generation 3    # what an older push looked like, no download
+datarobot sync compact ./my-project # reclaim dead bytes from a churny watch session
+datarobot sync gc                   # tier-1 cleanup only, safe to run from CI on a timer
 ```
 
 A long `watch` session produces many small, mostly-live packs that `gc` cannot reclaim (see
 [`../SPEC.md`](../SPEC.md) § Garbage and compaction) — that is what the periodic
-`dr-sync compact` hint in `watch`'s own output is for.
+`datarobot sync compact` hint in `watch`'s own output is for.
