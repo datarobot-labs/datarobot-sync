@@ -1,7 +1,12 @@
 +++
-title = 'Quick Start'
+title = 'Quick start'
 weight = 1
 +++
+
+datarobot-sync is rsync for the [DataRobot Files API](https://docs.datarobot.com): a single
+static Go binary that makes a local directory and a DataRobot Files container match,
+transferring only the difference, xz-compressed. It runs as a plugin of the
+[DataRobot CLI](https://cli.datarobot.com) (`datarobot sync …`) and as a standalone binary.
 
 A walkthrough from zero to a container that stays mirrored automatically. Everything below
 is copy-pasteable; the sample output is lightly edited from a real run.
@@ -11,7 +16,7 @@ See [Installation]({{% relref "docs/installation" %}}) for install options and
 
 ## 1. Credentials
 
-Nothing to configure if you already ran `dr auth login`. `dr-sync` resolves the endpoint
+Nothing to configure if you already ran `dr auth login`. datarobot-sync resolves the endpoint
 and token itself, in this order:
 
 1. `--endpoint` (there is no `--token` flag, deliberately — a flag would put it in the
@@ -27,14 +32,14 @@ variables set at all**, credentials coming entirely from that file.
 ## 2. Create a container and push
 
 ```sh
-$ dr-sync init --name "dr-sync-quickstart"
+$ datarobot sync init --name "dr-sync-quickstart"
 create  container 0123456789abcdef01234567
 seed    0000000000-e67a202c written
 done    container ready
 0123456789abcdef01234567
 
 $ export DR_SYNC_CATALOG_ID=0123456789abcdef01234567
-$ dr-sync upload ./my-project
+$ datarobot sync upload ./my-project
 remote  empty container; this will be generation 0
 scan    142 entries  hashed 138 (4.2 MiB)  reused 0
 plan    new 138  changed 0  unchanged 0  remote-only 0
@@ -50,7 +55,7 @@ is fine to export it for the rest of a shell session or bake it into a Taskfile.
 Pull it back somewhere else, and confirm it round-trips exactly:
 
 ```sh
-$ dr-sync download ./restored
+$ datarobot sync download ./restored
 remote  generation 0  138 files  4.2 MiB  3 packs
 scan    up-to-date 0  stale/missing 138  extraneous 0
 plan    138 files from 3 packs (~1.1 MiB to transfer)
@@ -65,12 +70,12 @@ $ echo $?
 
 ## 3. A local dev loop
 
-Running `dr-sync upload` in a loop yourself pays for process startup, config resolution
-and a fresh connection every time. [`dr-sync watch`]({{% relref "docs/watch" %}}) stays
+Running `datarobot sync upload` in a loop yourself pays for process startup, config resolution
+and a fresh connection every time. [`datarobot sync watch`]({{% relref "docs/watch" %}}) stays
 resident and pushes only when the tree actually settles:
 
 ```sh
-$ dr-sync watch ./my-project --verbose
+$ datarobot sync watch ./my-project --verbose
 ```
 
 `--delete` defaults **on** for `watch` — unlike `upload`, which stays additive — because
@@ -108,10 +113,10 @@ file itself — for cron, let `~/.config/datarobot/drconfig.yaml` carry it inste
 ## 5. Checking on it
 
 ```sh
-dr-sync inspect --packs      # generations, dead bytes, what compact would reclaim
-dr-sync ls --generation 3    # what an older push looked like, no download
-dr-sync compact ./my-project # reclaim dead bytes from a churny watch session
-dr-sync gc                   # tier-1 cleanup only, safe to run from CI on a timer
+datarobot sync inspect --packs      # generations, dead bytes, what compact would reclaim
+datarobot sync ls --generation 3    # what an older push looked like, no download
+datarobot sync compact ./my-project # reclaim dead bytes from a churny watch session
+datarobot sync gc                   # tier-1 cleanup only, safe to run from CI on a timer
 ```
 
 See [Concurrency and garbage collection]({{% relref "docs/concurrency" %}}) for why a

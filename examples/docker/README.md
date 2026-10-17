@@ -43,7 +43,7 @@ got: hello-from-docker-run
 ```
 
 The image itself is `cgr.dev/chainguard/busybox`, not the fully shell-less `static` the
-published dr-sync image uses: supercronic execs every crontab line through `/bin/sh -c`,
+published datarobot-sync image uses: supercronic execs every crontab line through `/bin/sh -c`,
 so it needs the one thing `static` deliberately omits. `busybox` is the smallest Wolfi/
 Chainguard image that still has it, and both images run as chainguard's nonroot user
 (uid 65532, `$HOME=/home/nonroot`) by default — no root anywhere in this picture.

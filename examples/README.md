@@ -10,7 +10,7 @@ each of these is referenced from there with the context for when you'd reach for
 | [`systemd/`](systemd/) | the same two shapes as native user-level systemd units (Linux) |
 | [`launchd/`](launchd/) | the resident-`watch` shape as a per-user LaunchAgent (macOS) |
 
-None of these need credentials written into them. dr-sync resolves
+None of these need credentials written into them. datarobot-sync resolves
 `DATAROBOT_ENDPOINT`/`DATAROBOT_API_TOKEN` itself — environment first, then
 `~/.config/datarobot/drconfig.yaml` (the file `dr auth login` writes) — so every example here
 either passes them through from its own environment or, for the two local-service examples,

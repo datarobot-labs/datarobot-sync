@@ -3,9 +3,9 @@ title = 'Examples'
 weight = 5
 +++
 
-Runnable companions to [Quick Start]({{% relref "docs/quick-start" %}}) §4, in
+Runnable companions to [Quick start]({{% relref "docs/quick-start" %}}) §4, in
 [`examples/`](https://github.com/datarobot-labs/datarobot-sync/tree/main/examples).
-None of these need credentials written into them — `dr-sync` resolves
+None of these need credentials written into them — datarobot-sync resolves
 `DATAROBOT_ENDPOINT`/`DATAROBOT_API_TOKEN` itself, environment first, then
 `~/.config/datarobot/drconfig.yaml` (the file `dr auth login` writes). `DR_SYNC_CATALOG_ID`
 is not a credential — it only names which container to sync — so it does appear directly
@@ -43,7 +43,7 @@ in a container but the job can't see its own credentials" trap. `Dockerfile.cron
 [`supercronic`](https://github.com/aptible/supercronic) instead: a normal foreground
 process that spawns each job inheriting its own environment, exactly like any other
 subprocess. The image itself is `cgr.dev/chainguard/busybox`, not the fully shell-less
-`static` the published `dr-sync` image uses, because supercronic execs every crontab line
+`static` the published datarobot-sync image uses, because supercronic execs every crontab line
 through `/bin/sh -c`.
 {{< /callout >}}
 

@@ -1,5 +1,5 @@
 +++
-title = 'Exit Codes'
+title = 'Exit codes'
 weight = 9
 +++
 

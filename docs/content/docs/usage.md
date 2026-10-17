@@ -5,33 +5,33 @@ weight = 3
 
 ```sh
 # First time
-dr-sync init --name "my project"
+datarobot sync init --name "my project"
 export DR_SYNC_CATALOG_ID=<the id it printed>
 
 # Push and pull
-dr-sync upload   ./src
-dr-sync download ./restored
+datarobot sync upload   ./src
+datarobot sync download ./restored
 
 # See what a push would do, change nothing
-dr-sync status ./src
+datarobot sync status ./src
 
 # Make the remote mirror the local tree exactly, dropping paths that are gone
-dr-sync upload ./src --delete
+datarobot sync upload ./src --delete
 
 # Make the local tree mirror the remote exactly
-dr-sync download ./src --delete
+datarobot sync download ./src --delete
 
 # Only part of the tree
-dr-sync download ./src --prefix docs/ --prefix src/api/
+datarobot sync download ./src --prefix docs/ --prefix src/api/
 
 # Roll back to a retained older push
-dr-sync ls --generation 41
-dr-sync download ./src --generation 41
+datarobot sync ls --generation 41
+datarobot sync download ./src --generation 41
 
 # What is in there, and what is reclaimable
-dr-sync inspect --packs
-dr-sync compact ./src     # rewrite sparse packs, run from a complete checkout
-dr-sync gc                # delete unreferenced objects, moves no data
+datarobot sync inspect --packs
+datarobot sync compact ./src     # rewrite sparse packs, run from a complete checkout
+datarobot sync gc                # delete unreferenced objects, moves no data
 ```
 
 ## Shell completions

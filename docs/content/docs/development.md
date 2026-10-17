@@ -8,7 +8,7 @@ task lint              # go mod tidy, gofumpt, vet, golangci-lint per GOOS, gore
 task test              # unit tests, race detector on
 task test:integration  # against a real instance; creates and deletes its own containers
 task build              # ./dist/dr-sync
-task install:local      # ~/.local/bin/dr-sync, so `dr sync …` runs your working tree
+task install:local      # ~/.local/bin/dr-sync, so `datarobot sync …` runs your working tree
 task plugin:package     # the dr plugin .tar.xz
 task release:snapshot   # full release locally, publishes nothing
 ```

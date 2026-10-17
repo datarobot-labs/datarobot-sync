@@ -45,7 +45,7 @@ Verified live against `app.datarobot.com`:
   A "stage" batches many of them behind **one** commit — the whole reason packing,
   rather than mirroring, is the design.
 - DataRobot's intake will not unpack xz — only zip, tar, tar.gz/tgz, tar.bz2, gz, bz2.
-  Server-side extraction is off the table, so `dr-sync` does all tarring, compressing,
+  Server-side extraction is off the table, so datarobot-sync does all tarring, compressing,
   and extraction locally.
 
 ## Decisions this led to
@@ -56,7 +56,7 @@ Verified live against `app.datarobot.com`:
 2. **No local state.** All sync state lives in the remote manifest; local disk is not
    trusted between runs.
 3. **Catalog ID is explicit** — `--catalog-id` flag or `DR_SYNC_CATALOG_ID` — with a
-   dedicated `dr-sync init` subcommand to create the container.
+   dedicated `datarobot sync init` subcommand to create the container.
 4. Shipped by goreleaser: per-platform binaries, a ghcr image, and a `dr` plugin
    `.tar.xz` bundling every platform behind a wrapper script.
 5. **fsnotify for `watch`, not `rjeczalik/notify`.** `rjeczalik/notify` needs CGO for

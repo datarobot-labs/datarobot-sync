@@ -3,11 +3,11 @@ title = 'Watch'
 weight = 4
 +++
 
-`dr-sync watch <path>` is a resident process that keeps pushing a directory as it
+`datarobot sync watch <path>` is a resident process that keeps pushing a directory as it
 changes, instead of running `upload` in a loop yourself:
 
 ```sh
-dr-sync watch ./src
+datarobot sync watch ./src
 ```
 
 It shares every `upload` flag, but `--delete` defaults **on** — watch mirrors the local
@@ -28,7 +28,7 @@ so a missed event costs latency, not correctness.
 
 `watch` uses your OS's native filesystem notifications (inotify on Linux, kqueue on
 macOS/BSD, ReadDirectoryChangesW on Windows), one watch per directory. Each one costs a
-watch descriptor: a very large tree, or several `watch` processes at once, can hit a
+watch descriptor: a large tree, or several `watch` processes at once, can hit a
 platform limit.
 
 - **Linux (inotify):** raise `fs.inotify.max_user_watches` (and `max_user_instances` if
@@ -53,7 +53,7 @@ Each `watch` process announces itself under `.dr-sync/writers/` in the container
 peer can tell it is active. There is no mutable pointer file — nothing in the container
 is ever overwritten — so each resident writer instead owns a sequence-named object,
 refreshed the same way a lease is: write the next sequence, delete the previous one. The
-registry is the union of whatever is currently live.
+registry is the union of whatever is live.
 
 If the container moves while `watch` is running — the head advanced, or a fork was
 detected — `watch` holds back `--delete` for that cycle and warns, rather than deleting
@@ -67,4 +67,4 @@ benefit — many small pushes produce many *mostly*-live packs, which tier-1's
 `liveRatio == 0` rule cannot reclaim regardless of how often it runs. Instead `watch`
 runs one garbage-collection sweep on a timer (`--gc-interval`) and once more on clean
 shutdown. See [Concurrency and garbage collection]({{% relref "docs/concurrency" %}}) for
-why a long watch session still wants an occasional `dr-sync compact`.
+why a long watch session still wants an occasional `datarobot sync compact`.

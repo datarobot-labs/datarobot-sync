@@ -3,30 +3,40 @@
     <img src="https://af.datarobot.com/img/datarobot_logo.avif" width="600px" alt="DataRobot Logo"/>
   </a>
 </p>
-<h2 align="center">dr-sync: DataRobot rsync</h2>
+<h2 align="center">datarobot-sync: DataRobot rsync</h2>
 <p align="center">
   <a href="https://datarobot-labs.github.io/datarobot-sync/">
     <img src="https://img.shields.io/badge/documentation-a?label=Docs&labelColor=30373D&color=5B8FF9" alt="Documentation">
   </a>
 </p>
 
-rsync for the DataRobot Files API. A single static Go binary that makes a local directory and
-a DataRobot Files container match, transferring only the difference, xz-compressed.
+rsync for the DataRobot Files API. It makes a local directory and a DataRobot Files container
+match, transferring only the difference, xz-compressed.
 
-It is also a `dr` CLI plugin, so everything below works equally as `dr sync …`. Full
-documentation: [Docs Site](https://datarobot-labs.github.io/datarobot-sync/).
+It runs as a plugin of the [DataRobot CLI](https://cli.datarobot.com), and as a single static Go
+binary for containers and services. Full documentation:
+[Docs Site](https://datarobot-labs.github.io/datarobot-sync/).
 
 ```sh
-dr-sync init                          # create a container, print its id
-dr-sync upload   ./my-project         # push, sending only what changed
-dr-sync download ./my-project         # pull, fetching only what is missing
+datarobot sync init                          # create a container, print its id
+datarobot sync upload   ./my-project         # push, sending only what changed
+datarobot sync download ./my-project         # pull, fetching only what is missing
 ```
 
 ## Requirements
 
 Works against DataRobot 11.4 and later. The Files API's `allFiles` listing endpoint gained a
-`recursive` parameter in 11.7; against an older instance dr-sync detects the resulting 400 and
+`recursive` parameter in 11.7; against an older instance datarobot-sync detects the resulting 400 and
 falls back to the equivalent request automatically, no configuration needed.
+
+## Give an always-on agent a memory
+
+A restart wipes a container's disk, and with it the skills, memories, and sessions an agent harness
+such as [Hermes](https://github.com/datarobot-labs/datarobot-labs-hermes) or OpenClaw built up.
+`dr-sync download` on boot restores them, `watch` or a timed `upload` keeps them current, and one
+final `upload` on shutdown captures the last changes. Retained generations make a corrupted memory
+recoverable instead of lost. See the
+[agent harnesses guide](https://datarobot-labs.github.io/datarobot-sync/docs/agent-harnesses/).
 
 ## Why it is fast
 
@@ -48,7 +58,7 @@ As a `dr` plugin, from a release or a local archive:
 ```sh
 dr plugin install sync --url https://github.com/datarobot-labs/datarobot-sync/releases/latest/download/sync-<version>.tar.xz
 dr plugin install sync --file dist/sync-<version>.tar.xz    # from `task plugin:package`
-dr sync --help
+datarobot sync --help
 ```
 
 That installs under `$XDG_CONFIG_HOME/datarobot/plugins/sync/`. For development, a
@@ -88,9 +98,9 @@ See [`docs/quickstart.md`](docs/quickstart.md) for a full walkthrough, including
 | Config file | `--config` | `DATAROBOT_CONFIG` |
 
 Precedence is flag, then environment, then config file. Under the `dr` CLI the endpoint and
-token arrive already validated; standalone, dr-sync falls back to
+token arrive already validated; standalone, datarobot-sync falls back to
 `~/.config/datarobot/drconfig.yaml` — the same file `dr auth login` writes. Because the flag
-names double as config keys, that file can also carry dr-sync's own settings:
+names double as config keys, that file can also carry settings for datarobot-sync:
 
 ```yaml
 endpoint: https://app.datarobot.com/api/v2
@@ -104,33 +114,33 @@ shell history.
 
 ```sh
 # First time
-dr-sync init --name "my project"
+datarobot sync init --name "my project"
 export DR_SYNC_CATALOG_ID=<the id it printed>
 
 # Push and pull
-dr-sync upload   ./src
-dr-sync download ./restored
+datarobot sync upload   ./src
+datarobot sync download ./restored
 
 # See what a push would do, change nothing
-dr-sync status ./src
+datarobot sync status ./src
 
 # Make the remote mirror the local tree exactly, dropping paths that are gone
-dr-sync upload ./src --delete
+datarobot sync upload ./src --delete
 
 # Make the local tree mirror the remote exactly
-dr-sync download ./src --delete
+datarobot sync download ./src --delete
 
 # Only part of the tree
-dr-sync download ./src --prefix docs/ --prefix src/api/
+datarobot sync download ./src --prefix docs/ --prefix src/api/
 
 # Roll back to a retained older push
-dr-sync ls --generation 41
-dr-sync download ./src --generation 41
+datarobot sync ls --generation 41
+datarobot sync download ./src --generation 41
 
 # What is in there, and what is reclaimable
-dr-sync inspect --packs
-dr-sync compact ./src     # rewrite sparse packs, run from a complete checkout
-dr-sync gc                # delete unreferenced objects, moves no data
+datarobot sync inspect --packs
+datarobot sync compact ./src     # rewrite sparse packs, run from a complete checkout
+datarobot sync gc                # delete unreferenced objects, moves no data
 ```
 
 Shell completions come from cobra:
@@ -151,11 +161,11 @@ node_modules/
 
 ## Watch
 
-`dr-sync watch <path>` is a resident process that keeps pushing a directory as it changes,
+`datarobot sync watch <path>` is a resident process that keeps pushing a directory as it changes,
 instead of running `upload` in a loop yourself:
 
 ```sh
-dr-sync watch ./src
+datarobot sync watch ./src
 ```
 
 It shares every `upload` flag, but `--delete` defaults **on** — watch mirrors the local tree
@@ -176,7 +186,7 @@ Flags worth knowing:
 
 `watch` uses your OS's native filesystem notifications (inotify on Linux, kqueue on
 macOS/BSD, ReadDirectoryChangesW on Windows), one watch per directory. Each one costs a
-watch descriptor: a very large tree, or several `watch` processes at once, can hit a
+watch descriptor: a large tree, or several `watch` processes at once, can hit a
 platform limit.
 
 - **Linux (inotify):** raise `fs.inotify.max_user_watches` (and `max_user_instances` if
@@ -190,7 +200,7 @@ the warning.
 
 ## What the container looks like
 
-dr-sync does not store your files at their own paths. Everything lives under a reserved
+datarobot-sync does not store your files at their own paths. Everything lives under a reserved
 prefix as immutable objects:
 
 ```
@@ -201,18 +211,18 @@ prefix as immutable objects:
 ```
 
 That is a deliberate trade. DataRobot's intake cannot unpack xz, so genuine LZMA2 compression
-means dr-sync owns the layout on both sides. The container is not browsable as files; in
-exchange the transfer is compressed, deduplicated, and resumable. `dr-sync ls` shows the tree
+means datarobot-sync owns the layout on both sides. The container is not browsable as files; in
+exchange the transfer is compressed, deduplicated, and resumable. `datarobot sync ls` shows the tree
 without downloading anything.
 
-Nothing in the container is ever overwritten, and the current manifest is simply the
+Nothing in the container is ever overwritten, and the current manifest is the
 highest-numbered one — which is what makes an interrupted push invisible rather than
 corrupting.
 
 ## Concurrency
 
 Two clients pushing to one container is guarded, not prevented: the API has no
-compare-and-swap. dr-sync takes an advisory lease, revalidates immediately before committing,
+compare-and-swap. datarobot-sync takes an advisory lease, revalidates immediately before committing,
 and reports a fork afterwards if one happened. A genuine simultaneous push means one side's
 update is not in the head — detected, never silently corrupted, and healed by re-running.
 `--force` overrides the lease when the holder is known to be gone.
@@ -245,7 +255,7 @@ task lint            # go mod tidy, gofumpt, vet, golangci-lint per GOOS, gorele
 task test            # unit tests, race detector on
 task test:integration  # against a real instance; creates and deletes its own containers
 task build           # ./dist/dr-sync
-task install:local   # ~/.local/bin/dr-sync, so `dr sync …` runs your working tree
+task install:local   # ~/.local/bin/dr-sync, so `datarobot sync …` runs your working tree
 task plugin:package  # the dr plugin .tar.xz
 task release:snapshot  # full release locally, publishes nothing
 ```
