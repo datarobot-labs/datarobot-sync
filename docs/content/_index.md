@@ -3,13 +3,16 @@ title = 'datarobot-sync'
 layout = 'hextra-home'
 +++
 
+{{< hextra/hero-badge link="https://github.com/datarobot-labs" >}}
+A DataRobot Solution Labs project
+{{< /hextra/hero-badge >}}
 {{< hextra/hero-badge link="https://cli.datarobot.com" >}}
 Also a DataRobot CLI plugin
 {{< /hextra/hero-badge >}}
 {{< hextra/hero-badge >}}
 Built for always-on agents
 {{< /hextra/hero-badge >}}
-{{< hextra/hero-badge >}}
+{{< hextra/hero-badge link="https://www.datarobot.com" >}}
 Works with DataRobot 11.4+
 {{< /hextra/hero-badge >}}
 
@@ -21,7 +24,7 @@ Works with DataRobot 11.4+
 
 <div class="hx:mb-12">
 {{< hextra/hero-subtitle >}}
-  An always-on agent that forgets everything on restart isn't always on.&nbsp;<br class="hx:sm:block hx:hidden" />datarobot-sync keeps its skills and memories in DataRobot Files and moves only what changed
+  An always-on agent that forgets everything on restart isn't always on.&nbsp;<br class="hx:sm:block hx:hidden" />datarobot-sync keeps its skills and memories in <a href="https://www.datarobot.com" target="_blank" rel="noreferrer">DataRobot</a> Files and moves only what changed
 {{< /hextra/hero-subtitle >}}
 </div>
 
