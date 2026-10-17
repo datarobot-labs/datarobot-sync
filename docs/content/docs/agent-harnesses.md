@@ -24,7 +24,7 @@ following table shows.
 | Point | Command | Purpose |
 |---|---|---|
 | Before the agent starts | `dr-sync download "$AGENT_HOME"` | Restore what the last run pushed. |
-| While the agent runs | `dr-sync upload "$AGENT_HOME"` on a timer, or `dr-sync watch` | Keep the container current. |
+| While the agent runs | `dr-sync upload "$AGENT_HOME" --delete` on a timer, or `dr-sync watch` | Keep the container current. |
 | On SIGTERM | One final `upload`, bounded by a timeout | Capture changes since the last push. |
 
 ## Write the entrypoint
@@ -40,7 +40,7 @@ directory and `DR_SYNC_CATALOG_ID` to the container ID from `dr-sync init`. data
 # DATAROBOT_ENDPOINT and DATAROBOT_API_TOKEN are read from the environment.
 set -u
 
-push() { flock /tmp/.dr-sync.lock timeout "${1:-0}" dr-sync upload "$AGENT_HOME"; }
+push() { flock /tmp/.dr-sync.lock timeout "${1:-0}" dr-sync upload "$AGENT_HOME" --delete; }
 
 # 1. Restore, and fail closed. A failed download must not fall through to an
 #    empty start: the first upload would replace the good remote copy.
@@ -66,20 +66,42 @@ kill "$loop" 2>/dev/null
 push 20
 ```
 
+The push uses `--delete`, so a skill or memory the agent removes is removed from the container too,
+and a restored agent doesn't resurrect it. The restore omits `--delete` on purpose. On a first boot the
+remote is empty, and `--delete` would remove the files the image seeded into `AGENT_HOME`.
+
 A failed download stops the boot. If the agent started empty and then uploaded, its first push would
 replace the good remote copy as the head. An empty container, as on a first deploy, counts as a
 successful download, so the first boot starts clean and later boots restore.
 
-## Keep a way back
+## Roll back a bad write
 
-A corrupted memory file is a rollback, not a loss. Nothing in the container is ever overwritten, and
-`--keep-generations 144` at one push per ten minutes retains about a day of history. To restore an
-earlier state, inspect a retained generation, then download it:
+Nothing in the container is ever overwritten, and `--keep-generations 144` at one push per ten
+minutes retains about a day of history. A rollback has two parts, because pulling an old generation
+changes only the local directory. It never moves the remote head, so the next boot would download the
+corrupted head again. Restore the old state, then push it as the new head, with the agent stopped
+throughout:
 
-```bash
-dr-sync ls --generation 41
-dr-sync download "$AGENT_HOME" --generation 41
-```
+1. Stop the agent and its push loop. A running loop uploads the corrupted state over the restore.
+2. Find the last good generation. `dr-sync inspect` lists the retained generations, and
+   `dr-sync ls --generation 41` shows what one contains.
+3. Restore that generation, and delete what it doesn't contain:
+
+   ```bash
+   dr-sync download "$AGENT_HOME" --generation 41 --delete
+   ```
+
+   Without `--delete`, a path the bad write introduced stays on disk.
+4. Inspect the restored tree to confirm it is the state to keep.
+5. Push the restored tree as a new head:
+
+   ```bash
+   dr-sync upload "$AGENT_HOME" --delete
+   ```
+
+   The upload creates a new generation, so the next boot restores the repaired state, and the
+   corrupted generations remain retained until they age out.
+6. Start the agent.
 
 For what a generation is, see [Container layout]({{% relref "docs/container-layout" %}}).
 
