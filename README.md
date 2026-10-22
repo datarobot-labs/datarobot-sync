@@ -32,7 +32,7 @@ falls back to the equivalent request automatically, no configuration needed.
 ## Give an always-on agent a memory
 
 A restart wipes a container's disk, and with it the skills, memories, and sessions an agent harness
-such as [Hermes](https://github.com/datarobot-labs/datarobot-labs-hermes) or OpenClaw built up.
+such as [Hermes](https://github.com/datarobot-labs/datarobot-labs-hermes-agent) or OpenClaw built up.
 `dr-sync download` on boot restores them, `watch` or a timed `upload` keeps them current, and one
 final `upload` on shutdown captures the last changes. Retained generations make a corrupted memory
 recoverable instead of lost. See the

@@ -8,7 +8,7 @@ container or workload, that directory is ephemeral. A restart, a reschedule, or 
 and the agent comes back with no memory of what it learned.
 
 datarobot-sync closes that gap. It mirrors the state directory to a DataRobot Files container, restores it
-on boot, and moves only what changed. [Hermes](https://github.com/datarobot-labs/datarobot-labs-hermes)
+on boot, and moves only what changed. [Hermes](https://github.com/datarobot-labs/datarobot-labs-hermes-agent)
 runs this way on DataRobot. Any harness that keeps its state under one directory can follow the same
 pattern, OpenClaw-style harnesses included.
 
