@@ -16,6 +16,8 @@ package syncer
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -210,26 +212,18 @@ func (r *downloadRun) apply(plan *DownloadPlan, failed []string) (int, error) {
 		failedPaths[path] = true
 	}
 
+	localCopies, err := r.stageLocalCopies(plan)
+	if err != nil {
+		return 0, err
+	}
+
 	if err := r.applyDirs(plan); err != nil {
 		return 0, err
 	}
 
-	written := 0
-
-	for _, entry := range plan.Empties {
-		if err := r.writeEmpty(entry); err != nil {
-			return written, err
-		}
-
-		written++
-	}
-
-	for _, copy := range plan.LocalCopies {
-		if err := r.copyLocal(copy); err != nil {
-			return written, err
-		}
-
-		written++
+	written, err := r.placeLocal(plan, localCopies)
+	if err != nil {
+		return written, err
 	}
 
 	staged, err := r.placeStaged(plan, failedPaths)
@@ -249,6 +243,29 @@ func (r *downloadRun) apply(plan *DownloadPlan, failed []string) (int, error) {
 
 	r.reporter.Phase("apply", fmt.Sprintf("%s files  %s dirs  %s symlinks",
 		progress.Count(written), progress.Count(len(plan.Dirs)), progress.Count(len(plan.Links))))
+
+	return written, nil
+}
+
+// placeLocal writes the empty files and moves the staged local copies into place.
+func (r *downloadRun) placeLocal(plan *DownloadPlan, localCopies []string) (int, error) {
+	written := 0
+
+	for _, entry := range plan.Empties {
+		if err := r.writeEmpty(entry); err != nil {
+			return written, err
+		}
+
+		written++
+	}
+
+	for i, local := range plan.LocalCopies {
+		if err := r.placeLocalCopy(local, localCopies[i]); err != nil {
+			return written, err
+		}
+
+		written++
+	}
 
 	return written, nil
 }
@@ -395,8 +412,72 @@ func copyFile(source, target string) error {
 	return replaceFile(tempName, target)
 }
 
-// copyLocal produces a file from an identical one already on disk.
-func (r *downloadRun) copyLocal(local LocalCopy) error {
+// stageLocalCopies copies every local source into the scratch directory before anything on disk
+// is replaced, and returns the staged paths in plan order.
+//
+// A source can also be the destination of another entry in the same pull, so reading it later
+// would copy whatever that entry left there.
+func (r *downloadRun) stageLocalCopies(plan *DownloadPlan) ([]string, error) {
+	staged := make([]string, len(plan.LocalCopies))
+
+	for i, local := range plan.LocalCopies {
+		path, err := r.stageLocal(local, i)
+		if err != nil {
+			return nil, err
+		}
+
+		staged[i] = path
+	}
+
+	return staged, nil
+}
+
+// stageLocal copies one local source into the scratch directory and checks that it still holds
+// the content the manifest records for the entry. A source edited since the scan fails here
+// instead of supplying the wrong bytes.
+func (r *downloadRun) stageLocal(local LocalCopy, index int) (string, error) {
+	source, err := os.Open(local.Source)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", local.Source, err)
+	}
+
+	defer source.Close()
+
+	path := filepath.Join(r.tempDir, fmt.Sprintf("%s.local-%d.part", local.Entry.SHA256, index))
+
+	staged, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("staging %s: %w", local.Entry.Path, err)
+	}
+
+	digest := sha256.New()
+
+	if _, err := io.Copy(io.MultiWriter(staged, digest), source); err != nil {
+		staged.Close()
+
+		_ = os.Remove(path)
+
+		return "", fmt.Errorf("copying %s: %w", local.Source, err)
+	}
+
+	if err := staged.Close(); err != nil {
+		_ = os.Remove(path)
+
+		return "", fmt.Errorf("closing %s: %w", path, err)
+	}
+
+	if hex.EncodeToString(digest.Sum(nil)) != local.Entry.SHA256 {
+		_ = os.Remove(path)
+
+		return "", fmt.Errorf("%s no longer holds the content for %s; run the pull again",
+			local.Source, local.Entry.Path)
+	}
+
+	return path, nil
+}
+
+// placeLocalCopy moves a staged local copy to its final path.
+func (r *downloadRun) placeLocalCopy(local LocalCopy, staged string) error {
 	full, err := scan.LocalPath(r.opts.Root, local.Entry.Path)
 	if err != nil {
 		return err
@@ -406,7 +487,7 @@ func (r *downloadRun) copyLocal(local LocalCopy) error {
 		return fmt.Errorf("creating %s: %w", filepath.Dir(full), err)
 	}
 
-	if err := copyFile(local.Source, full); err != nil {
+	if err := replaceFile(staged, full); err != nil {
 		return err
 	}
 

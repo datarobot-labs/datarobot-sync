@@ -317,6 +317,9 @@ recognizes by content-addressed name and skips; anything never re-run is reaped 
 6. **Apply** single-threaded in sorted order: `MkdirAll` first, `os.Rename` from the tmp dir
    (which lives under `<root>` precisely so the rename is same-filesystem and atomic),
    symlinks replaced, then `Chmod` then `Chtimes` (mtime last or the write resets it).
+   Local-reuse sources are first copied into the scratch directory and hashed, before anything
+   is replaced, so one placement in a pull cannot change what a later copy reads. A source that
+   no longer matches ends the run.
    **Strip setuid/setgid/sticky** unless `--preserve-special-modes` — materializing a setuid
    binary out of a remote blob is a security hole. Reject any manifest path that is
    absolute, contains `..` or NUL, starts with the meta prefix, or case-collides on a
