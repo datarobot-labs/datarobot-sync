@@ -237,6 +237,15 @@ moved on. Pair it with `download --backup`, which keeps every local file the pul
 removes under `.dr-sync-backup/<timestamp>/` in the sync root. datarobot-sync never uploads that
 directory.
 
+`run` wraps a command in all of this. It takes the lease, pulls the head and keeps your local
+edits under `.dr-sync-backup/`, runs the command, and pushes the result as the head's successor:
+
+```sh
+datarobot sync run ./state -- pulumi up
+```
+
+See [Run a command against shared state](docs/content/docs/run.md).
+
 A resident `watch` process additionally announces itself in `.dr-sync/writers/`, so a peer
 can tell it is active. If the container moves while `watch` is running, it holds back
 `--delete` for that cycle and warns instead of racing another writer's paths; `--force`
@@ -253,6 +262,7 @@ overrides that too.
 | 4 | conflict: a lease is held, the head moved, `--expect-head` does not match, or a fork was found |
 | 5 | integrity failure: checksum mismatch or a missing pack |
 | 6 | partial success: some files failed, the rest are complete |
+| 7 | the command under `run` failed, and the push still happened |
 | 130 | interrupted |
 
 `--output json` writes one JSON object per line to stdout, with human output on stderr, so it

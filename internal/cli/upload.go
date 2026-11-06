@@ -41,6 +41,8 @@ func classify(err error) error {
 		return Fail(CodeConflict, err)
 	case syncer.IsStaleManifest(err), packer.IsIntegrityError(err):
 		return Fail(CodeIntegrity, err)
+	case syncer.IsIncompleteDownload(err):
+		return Fail(CodePartial, err)
 	case errors.Is(err, syncer.ErrNoManifest), errors.Is(err, syncer.ErrInvalidTag):
 		return Fail(CodeUsage, err)
 	case errors.Is(err, manifest.ErrUnsupportedVersion):
@@ -161,33 +163,8 @@ func runUpload(cmd *cobra.Command, args []string, global *globalFlags, opts *upl
 		return err
 	}
 
-	result, err := syncer.Upload(ctx, session.store, session.reporter, syncer.UploadOptions{
-		Root:             root,
-		Check:            session.check,
-		Matcher:          session.matcher,
-		Delete:           opts.delete,
-		FollowSymlinks:   opts.followSymlinks,
-		Level:            opts.level,
-		PackInputMax:     opts.packInputMax,
-		BigFileThreshold: opts.bigFileThreshold,
-		SliceSize:        opts.sliceSize,
-		Jobs:             global.jobs,
-		CompressJobs:     opts.compressJobs,
-		UploadJobs:       opts.uploadJobs,
-		TempDir:          opts.tempDir,
-		MaxStageFiles:    opts.maxStageFiles,
-		MaxStageBytes:    opts.maxStageBytes,
-		Overwrite:        overwrite,
-		KeepGenerations:  opts.keepGenerations,
-		GCGrace:          opts.gcGrace,
-		NoGC:             opts.noGC,
-		CompactThreshold: opts.compactThreshold,
-		Lock:             !opts.noLock,
-		LeaseTTL:         opts.leaseTTL,
-		Force:            opts.force,
-		ExpectHead:       opts.expectHead,
-		DryRun:           global.dryRun,
-	})
+	result, err := syncer.Upload(ctx, session.store, session.reporter,
+		opts.uploadOptions(root, global, session, overwrite))
 	if err != nil {
 		return classify(err)
 	}
@@ -217,6 +194,36 @@ func runUpload(cmd *cobra.Command, args []string, global *globalFlags, opts *upl
 	})
 
 	return err
+}
+
+func (u *uploadFlags) uploadOptions(root string, global *globalFlags, session *session, overwrite drapi.OverwriteStrategy) syncer.UploadOptions {
+	return syncer.UploadOptions{
+		Root:             root,
+		Check:            session.check,
+		Matcher:          session.matcher,
+		Delete:           u.delete,
+		FollowSymlinks:   u.followSymlinks,
+		Level:            u.level,
+		PackInputMax:     u.packInputMax,
+		BigFileThreshold: u.bigFileThreshold,
+		SliceSize:        u.sliceSize,
+		Jobs:             global.jobs,
+		CompressJobs:     u.compressJobs,
+		UploadJobs:       u.uploadJobs,
+		TempDir:          u.tempDir,
+		MaxStageFiles:    u.maxStageFiles,
+		MaxStageBytes:    u.maxStageBytes,
+		Overwrite:        overwrite,
+		KeepGenerations:  u.keepGenerations,
+		GCGrace:          u.gcGrace,
+		NoGC:             u.noGC,
+		CompactThreshold: u.compactThreshold,
+		Lock:             !u.noLock,
+		LeaseTTL:         u.leaseTTL,
+		Force:            u.force,
+		ExpectHead:       u.expectHead,
+		DryRun:           global.dryRun,
+	}
 }
 
 // parseOverwrite validates the strategy, rejecting the two the API offers but dr-sync must

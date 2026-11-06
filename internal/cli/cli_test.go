@@ -66,7 +66,7 @@ func TestRootHelpListsEveryCommand(t *testing.T) {
 	require.Equal(t, CodeOK, code)
 
 	for _, name := range []string{
-		"init", "upload", "download", "watch", "status", "ls", "inspect", "compact", "gc", "version",
+		"init", "upload", "download", "watch", "run", "status", "ls", "inspect", "compact", "gc", "version",
 		// cobra contributes this one, and it is worth having.
 		"completion",
 	} {

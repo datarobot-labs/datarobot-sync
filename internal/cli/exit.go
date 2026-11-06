@@ -31,6 +31,7 @@ const (
 	CodeConflict    = 4   // foreign lease, generation moved, or a fork was detected
 	CodeIntegrity   = 5   // checksum mismatch, missing pack, unsupported formatVersion
 	CodePartial     = 6   // some files transferred, some failed
+	CodeCommand     = 7   // the command under `run` failed; the push still happened
 	CodeInterrupted = 130 // SIGINT/SIGTERM
 )
 

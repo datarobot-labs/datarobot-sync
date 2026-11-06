@@ -21,6 +21,9 @@ datarobot sync upload ./src --delete
 # Make the local tree mirror the remote exactly
 datarobot sync download ./src --delete
 
+# Run a command with the container as its working state: lease, pull, command, push
+datarobot sync run ./state -- pulumi up
+
 # Pull without losing local edits: replaced and removed files go to .dr-sync-backup/<timestamp>/
 datarobot sync download ./src --backup
 
@@ -80,6 +83,9 @@ only — no flag, so it stays out of `ps` and shell history.
 `--generation`/`--manifest` (pull a retained older generation), `--parallel`,
 `--link-duration`, `--no-local-reuse`, `--preserve-special-modes`,
 `--allow-unsafe-links`, `--tmpdir` (must share the filesystem with root).
+
+`run` takes the `upload` flags except `--expect-head` and `--compact`, with `--delete` on by
+default. See [Run]({{% relref "docs/run" %}}).
 
 See [Watch]({{% relref "docs/watch" %}}) for the flags specific to the resident
 mirroring mode.

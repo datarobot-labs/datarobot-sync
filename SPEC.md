@@ -431,6 +431,46 @@ collision with its own leftover). `AcquireLease` therefore seeds the new holder'
 from the highest one already on record for that client id, so a resumed run always picks an
 unused name.
 
+### Run
+
+`dr-sync run <path> -- <command> [args...]` makes a directory a working copy of the container
+for one command. It exists for tools that keep state in a directory several people or CI jobs
+share, where the pull, the command and the push have to happen as one guarded unit.
+
+1. **Lease.** Take the advisory lease for the whole run and renew it while the command works.
+   A foreign lease ends the run with exit 4 before anything is pulled; `--force` overrides it,
+   `--no-lock` skips it.
+2. **Pull.** Download the head into `<path>` with `Delete` (the default; `--delete=false` turns
+   it off) and `Backup` always on, so the command starts from the head and every local file
+   the pull replaces or removes is kept under `.dr-sync-backup/`, and a warning names that
+   directory, because the files may be state an earlier run failed to push. A pull that leaves
+   paths out, by failing to fetch them or by skipping an entry such as a symlink with an
+   absolute target, ends the run with exit 6 before the command starts, because the mirror push
+   would drop them. A container with no manifest at all skips the pull: the push then expects
+   an empty container, so a first push by another writer ends the run with exit 4.
+3. **Command.** Run it in the caller's working directory with `DR_SYNC_ROOT` set to the
+   absolute path of `<path>`. It is not tied to the run's context, so an interrupt reaches it
+   through the terminal and it can wind down and write its state. SIGTERM, which only
+   `dr-sync` receives, is forwarded to the command and not to what the command started, so a
+   shell wrapper should `exec` the last command. An interrupt that landed before the command
+   starts ends the run with exit 130 without running it.
+4. **Push.** Upload `<path>` with `ExpectHead` set to the manifest the pull reproduced, even
+   when the command failed: the state a failed run leaves is what the next run starts from.
+   The push uses a context that outlives the first interrupt of the run, and the second one
+   cancels it. A head that moved ends the run with exit 4, which a writer that ignored the
+   lease, a lease that lapsed, or `--no-lock` can cause. The command's changes stay in `<path>`
+   and the message says so.
+5. **Release** the lease, with a context that survives an interrupt.
+
+A command that fails exits the run with 7 after a successful push. A sync failure wins over a
+command failure. Any interrupt exits 130. `--dry-run`, `--output json` (events would mix into
+the command's stdout) and `--compact` are refused as usage errors, and `run` has no
+`--expect-head`: it supplies its own.
+
+Not provided: `lock` and `unlock`. A lease needs a process that renews it, so one that
+outlives its command would lapse after the TTL, and `run <path> -- $SHELL` covers a manual
+session.
+
 ### Garbage and compaction
 
 Per pack, `liveBytes` = Σ sizes of members still referenced; `liveRatio` = that over
@@ -484,6 +524,7 @@ when a fork is seen).
   is no local state (invariant 7). A caller that does know passes `--expect-head <id>`, the
   manifest id the last `download` printed, and the push ends with exit 4 when the head has
   moved. `--backup` on the pull covers the other half: the local edit survives the merge.
+  `run` does both around a command, under a lease.
 - *Read during compact.* A reader holding manifest N whose packs get deleted gets a missing
   name from `/links/` → exit 5, "re-run". Bounded by the grace window, not eliminated.
 - *Multi-stage commit.* Packs land in earlier catalog versions than the manifest; between
@@ -526,7 +567,7 @@ internal/packer/             pack planning, deterministic tar+xz+slice+sha build
 internal/extract/            needed-blob planning, slice-chained streaming with early abort
                              and Range resume, atomic apply
 internal/syncer/             the upload/download phase machines, classify, gc, compact, lease,
-                             the resident-writer registry
+                             run, the resident-writer registry
 internal/watcher/            watch's debounce/coalesce state machine and OS filesystem watch
                              management; a trigger is a hint, the re-scan is the truth
 internal/progress/           Reporter interface; tty / json / quiet renderers
@@ -594,6 +635,9 @@ Download adds `--delete`, `--delete-excluded`, `--backup`, `--prefix` (repeatabl
 `--link-duration`, `--no-local-reuse`, `--preserve-special-modes`, `--allow-unsafe-links`,
 `--tmpdir` (must share the filesystem with root).
 
+Run shares the upload flags except `--expect-head` and `--compact`, with `--delete` on by
+default like watch. `--timeout` bounds each transfer, not the command.
+
 Watch shares every upload flag — including `--timeout`, which bounds one cycle, not the
 daemon — but registers `--delete` with a default of `true` rather than `upload`'s `false`.
 The one exception is `--expect-head`: watch rejects it, because it pushes every cycle and one
@@ -604,8 +648,8 @@ It adds `--debounce` (2s), `--min-interval` (15s), `--poll-interval` (60s; `0` d
 
 **Exit codes:** 0 success (including nothing to do) · 1 internal · 2 usage/config/precondition
 · 3 API or auth failure · 4 conflict (foreign lease, generation moved, `--expect-head` mismatch, fork) · 5 integrity
-(SHA mismatch, missing pack, unsupported `formatVersion`) · 6 partial success · 130
-interrupted (lease released, scratch cleaned).
+(SHA mismatch, missing pack, unsupported `formatVersion`) · 6 partial success · 7 the command under
+`run` failed (the push still happened) · 130 interrupted (lease released, scratch cleaned).
 
 `--output json` emits one JSON object per line on stdout with human text on stderr, so it
 composes in CI. Human progress is per-phase — `remote` / `scan` / `plan` / `pack` / `upload`
