@@ -88,6 +88,20 @@ func TestWatchDefaultsToDeleteUnlikeUpload(t *testing.T) {
 		"watch must mirror the local tree by default")
 }
 
+func TestExpectHeadIsOnTheOneShotPushCommandsOnly(t *testing.T) {
+	isolate(t)
+
+	for _, command := range []string{"upload", "status"} {
+		_, help, _ := run(t, command, "--help")
+		assert.Contains(t, help, "--expect-head", "%s must offer --expect-head", command)
+	}
+
+	code, _, errOut := run(t, "watch", "./any", "--expect-head", "0000000001-abc")
+
+	assert.Equal(t, int(CodeUsage), code, "watch must reject a flag it would ignore")
+	assert.Contains(t, errOut, "unknown flag: --expect-head")
+}
+
 // deleteFlagLine finds the flag-listing line for --delete, not any mention of it in prose:
 // the Long description talks about --delete too, so a plain substring search would find that
 // instead of the flag definition it is meant to check.

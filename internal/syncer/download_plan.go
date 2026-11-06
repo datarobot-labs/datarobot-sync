@@ -88,8 +88,10 @@ func (r *downloadRun) unusable(entry manifest.Entry) string {
 		return "path is inside the reserved dr-sync prefix"
 	}
 
-	if entry.Path == scan.TempDirName || strings.HasPrefix(entry.Path, scan.TempDirName+"/") {
-		return "path collides with the download scratch directory"
+	for _, reserved := range [...]string{scan.TempDirName, scan.BackupDirName} {
+		if entry.Path == reserved || strings.HasPrefix(entry.Path, reserved+"/") {
+			return "path collides with the download scratch or backup directory"
+		}
 	}
 
 	if entry.Type == manifest.TypeSymlink && !r.opts.AllowUnsafeLinks {

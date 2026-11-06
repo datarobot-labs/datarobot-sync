@@ -74,6 +74,7 @@ type uploadFlags struct {
 	noLock           bool
 	leaseTTL         time.Duration
 	force            bool
+	expectHead       string
 }
 
 // register adds the shared upload flags. deleteDefault lets a caller flip what --delete
@@ -110,6 +111,13 @@ func (u *uploadFlags) register(cmd *cobra.Command, deleteDefault bool) {
 	flags.BoolVar(&u.force, "force", false, "ignore a foreign lease and a moved head")
 }
 
+// registerExpectHead adds --expect-head to the one-shot push commands. watch does not get it:
+// it pushes many times, so a single expected head would only fit its first cycle.
+func (u *uploadFlags) registerExpectHead(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&u.expectHead, "expect-head", "",
+		"refuse to push unless the container's head is this manifest id, the one `download` printed; --force does not override it")
+}
+
 func newUploadCommand(global *globalFlags) *cobra.Command {
 	opts := &uploadFlags{}
 
@@ -127,6 +135,7 @@ func newUploadCommand(global *globalFlags) *cobra.Command {
 	}
 
 	opts.register(cmd, false)
+	opts.registerExpectHead(cmd)
 
 	return cmd
 }
@@ -176,6 +185,7 @@ func runUpload(cmd *cobra.Command, args []string, global *globalFlags, opts *upl
 		Lock:             !opts.noLock,
 		LeaseTTL:         opts.leaseTTL,
 		Force:            opts.force,
+		ExpectHead:       opts.expectHead,
 		DryRun:           global.dryRun,
 	})
 	if err != nil {
@@ -281,6 +291,7 @@ func newStatusCommand(global *globalFlags) *cobra.Command {
 	}
 
 	opts.register(cmd, false)
+	opts.registerExpectHead(cmd)
 
 	return cmd
 }

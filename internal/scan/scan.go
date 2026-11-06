@@ -235,7 +235,7 @@ func (w *treeWalker) visit(absPath string, dirEntry fs.DirEntry, err error) erro
 func (w *treeWalker) excluded(normalized string, isDir bool) bool {
 	// The reserved directory and the scratch directory are matched at the root only, so a
 	// nested vendor/x/.dr-sync/ of the user's own still syncs normally.
-	for _, reserved := range [...]string{w.metaDir, TempDirName} {
+	for _, reserved := range [...]string{w.metaDir, TempDirName, BackupDirName} {
 		if normalized == reserved || strings.HasPrefix(normalized, reserved+"/") {
 			return true
 		}
@@ -348,6 +348,10 @@ func checkCaseCollisions(result *Result) error {
 // under the root so the final rename is same-filesystem and therefore atomic, which in turn
 // means the walker must know to skip it.
 const TempDirName = ".dr-sync-tmp"
+
+// BackupDirName is where `download --backup` keeps replaced or removed local files, in one
+// subdirectory per run. It is reserved like TempDirName, so scans skip it.
+const BackupDirName = ".dr-sync-backup"
 
 // DefaultJobs is the hashing concurrency when none is requested. Capped because hashing is
 // I/O bound and more readers past a point just add seek contention.

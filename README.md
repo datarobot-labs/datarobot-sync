@@ -230,6 +230,13 @@ exits with code 4 and changes nothing readers can see, and a re-run plans agains
 client from before claims existed can still fork the head, and datarobot-sync reports the fork
 afterwards. `--force` overrides the lease when the holder is known to be gone.
 
+The claim does not help a tree that is older than the head: its stale files look like local
+changes, so a push would overwrite a teammate's newer version. Pass `--expect-head <id>`, the
+manifest id the last `download` printed, and the push exits with code 4 when the container has
+moved on. Pair it with `download --backup`, which keeps every local file the pull replaces or
+removes under `.dr-sync-backup/<timestamp>/` in the sync root. datarobot-sync never uploads that
+directory.
+
 A resident `watch` process additionally announces itself in `.dr-sync/writers/`, so a peer
 can tell it is active. If the container moves while `watch` is running, it holds back
 `--delete` for that cycle and warns instead of racing another writer's paths; `--force`
@@ -243,7 +250,7 @@ overrides that too.
 | 1 | unexpected failure |
 | 2 | usage, config, or precondition error |
 | 3 | API or authentication failure |
-| 4 | conflict: a lease is held, the head moved, or a fork was found |
+| 4 | conflict: a lease is held, the head moved, `--expect-head` does not match, or a fork was found |
 | 5 | integrity failure: checksum mismatch or a missing pack |
 | 6 | partial success: some files failed, the rest are complete |
 | 130 | interrupted |

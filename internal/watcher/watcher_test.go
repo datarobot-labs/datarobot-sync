@@ -443,3 +443,20 @@ func TestUnmarkWatchedTreeDropsNestedEntries(t *testing.T) {
 		"a sibling that merely shares a name prefix must not be treated as nested")
 	assert.True(t, w.isWatched(filepath.Join(root, "other")), "an unrelated entry must be left alone")
 }
+
+func TestWatcherNeverWatchesTheBackupDirectory(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	backup := filepath.Join(root, scan.BackupDirName, "20260101T000000.000000Z")
+	require.NoError(t, os.MkdirAll(backup, 0o755))
+
+	w, triggers := startWatcher(t, Options{Root: root})
+
+	for _, watched := range w.Watched() {
+		assert.NotContains(t, watched, scan.BackupDirName, "the backup directory must never be watched")
+	}
+
+	require.NoError(t, os.WriteFile(filepath.Join(backup, "kept.txt"), []byte("x"), 0o600))
+	assertNoTrigger(t, triggers, 300*time.Millisecond)
+}

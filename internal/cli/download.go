@@ -27,6 +27,7 @@ type downloadFlags struct {
 	prefixes             []string
 	delete               bool
 	deleteExcluded       bool
+	backup               bool
 	noLocalReuse         bool
 	preserveSpecialModes bool
 	allowUnsafeLinks     bool
@@ -55,6 +56,8 @@ func newDownloadCommand(global *globalFlags) *cobra.Command {
 	flags := cmd.Flags()
 	flags.StringArrayVar(&opts.prefixes, "prefix", nil, "restrict the pull to this subtree (repeatable)")
 	flags.BoolVar(&opts.delete, "delete", false, "remove local paths the manifest does not mention")
+	flags.BoolVar(&opts.backup, "backup", false,
+		"keep local files the pull replaces or removes under .dr-sync-backup/<timestamp>/ in the sync root")
 	flags.BoolVar(&opts.deleteExcluded, "delete-excluded", false,
 		"also remove directories that only hold excluded files")
 	flags.BoolVar(&opts.noLocalReuse, "no-local-reuse", false,
@@ -98,6 +101,7 @@ func runDownload(cmd *cobra.Command, args []string, global *globalFlags, opts *d
 		ManifestID:           opts.manifestID,
 		Delete:               opts.delete,
 		DeleteExcluded:       opts.deleteExcluded,
+		Backup:               opts.backup,
 		NoLocalReuse:         opts.noLocalReuse,
 		PreserveSpecialModes: opts.preserveSpecialModes,
 		AllowUnsafeLinks:     opts.allowUnsafeLinks,
