@@ -60,8 +60,8 @@ node_modules/
 (`DATAROBOT_CONFIG`, default `~/.config/datarobot/drconfig.yaml`), `--meta-prefix`
 (`.dr-sync/`), `--check auto|full|size|mtime`, `--exclude`/`--include`/`--exclude-from`
 (gitignore-style, matched on the relative POSIX path), `--jobs`, `--timeout`,
-`--retries`, `-v/--verbose`, `-q/--quiet`, `--output text|json`, `--no-color`,
-`--dry-run`, `--yes`. The token comes from `DATAROBOT_API_TOKEN` or the config file
+`--retries`, `--no-presign` (`DR_SYNC_NO_PRESIGN`), `-v/--verbose`, `-q/--quiet`,
+`--output text|json`, `--no-color`, `--dry-run`, `--yes`. The token comes from `DATAROBOT_API_TOKEN` or the config file
 only — no flag, so it stays out of `ps` and shell history.
 
 `upload` adds `--delete`, `--level 0|1|3|6|9` (default 6), `--pack-size`,

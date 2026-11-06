@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -64,6 +65,19 @@ type fakeAPI struct {
 	// loseResponse runs after a commit has been applied. When it returns true the server answers
 	// 503, so the client retries a stage that no longer exists.
 	loseResponse func(names []string) bool
+
+	// linkBase, when set, replaces the host in presigned URLs, so a test can point them at an
+	// address nothing listens on. storeStatus, when non-zero, is what the object store answers
+	// instead of the object. storeScope limits both to object names with that prefix. All three
+	// are guarded by mu.
+	linkBase    string
+	storeStatus int
+	storeScope  string
+
+	// blobFetches counts requests that reached the object store, and fileReads counts reads
+	// through files/{id}/file/, so a test can tell which path a download took.
+	blobFetches atomic.Int64
+	fileReads   atomic.Int64
 }
 
 type fakeContainer struct {
@@ -113,6 +127,7 @@ var (
 	reUpload   = regexp.MustCompile(`^/api/v2/files/([^/]+)/stages/([^/]+)/upload/$`)
 	reCommit   = regexp.MustCompile(`^/api/v2/files/([^/]+)/fromStage/$`)
 	reLinks    = regexp.MustCompile(`^/api/v2/files/([^/]+)/links/$`)
+	reFile     = regexp.MustCompile(`^/api/v2/files/([^/]+)/file/$`)
 	reDetails  = regexp.MustCompile(`^/api/v2/catalogItems/([^/]+)/extendedDetails/$`)
 	reCatalog  = regexp.MustCompile(`^/api/v2/catalogItems/([^/]+)/$`)
 	reBlob     = regexp.MustCompile(`^/blob/([^?]+)$`)
@@ -154,6 +169,8 @@ func (a *fakeAPI) routes(t *testing.T) http.Handler {
 			a.commitStage(t, w, r, reCommit.FindStringSubmatch(path)[1])
 		case reLinks.MatchString(path) && r.Method == http.MethodPost:
 			a.signLinks(t, w, r, reLinks.FindStringSubmatch(path)[1])
+		case reFile.MatchString(path) && r.Method == http.MethodGet:
+			a.serveFile(t, w, r, reFile.FindStringSubmatch(path)[1])
 		case reDetails.MatchString(path) && r.Method == http.MethodGet:
 			a.extendedDetails(t, w, reDetails.FindStringSubmatch(path)[1])
 		case reCatalog.MatchString(path):
@@ -448,6 +465,8 @@ func (a *fakeAPI) signLinks(t *testing.T, w http.ResponseWriter, r *http.Request
 			}
 		}
 	}
+
+	linkBase, scope := a.linkBase, a.storeScope
 	a.mu.Unlock()
 
 	if !ok {
@@ -467,9 +486,14 @@ func (a *fakeAPI) signLinks(t *testing.T, w http.ResponseWriter, r *http.Request
 	links := make([]map[string]string, 0, len(body.FileNames))
 
 	for _, name := range body.FileNames {
+		base := a.server.URL
+		if linkBase != "" && strings.HasPrefix(name, scope) {
+			base = linkBase
+		}
+
 		links = append(links, map[string]string{
 			"fileName": name,
-			"url":      fmt.Sprintf("%s/blob/%s?container=%s&sig=1", a.server.URL, name, id),
+			"url":      fmt.Sprintf("%s/blob/%s?container=%s&sig=1", base, name, id),
 		})
 	}
 
@@ -486,6 +510,8 @@ func (a *fakeAPI) serveBlob(t *testing.T, w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	a.blobFetches.Add(1)
+
 	id := r.URL.Query().Get("container")
 
 	a.mu.Lock()
@@ -495,7 +521,18 @@ func (a *fakeAPI) serveBlob(t *testing.T, w http.ResponseWriter, r *http.Request
 	if ok {
 		object, ok = container.objects[name]
 	}
+
+	status := a.storeStatus
+	if !strings.HasPrefix(name, a.storeScope) {
+		status = 0
+	}
 	a.mu.Unlock()
+
+	if status != 0 {
+		http.Error(w, "<Error><Code>AccessDenied</Code></Error>", status)
+
+		return
+	}
 
 	if !ok {
 		http.Error(w, "<Error><Code>NoSuchKey</Code></Error>", http.StatusNotFound)
@@ -506,6 +543,74 @@ func (a *fakeAPI) serveBlob(t *testing.T, w http.ResponseWriter, r *http.Request
 	if _, err := w.Write(object.content); err != nil {
 		t.Errorf("writing blob: %v", err)
 	}
+}
+
+// serveFile answers GET files/{id}/file/.
+func (a *fakeAPI) serveFile(t *testing.T, w http.ResponseWriter, r *http.Request, id string) {
+	t.Helper()
+
+	a.fileReads.Add(1)
+
+	name := r.URL.Query().Get("fileName")
+
+	a.mu.Lock()
+	container, ok := a.containers[id]
+
+	var object fakeObject
+
+	exists := false
+	if ok {
+		object, exists = container.objects[name]
+	}
+	a.mu.Unlock()
+
+	if !ok {
+		writeJSON(t, w, http.StatusGone, map[string]string{"message": "Not Found"})
+
+		return
+	}
+
+	if !exists {
+		writeJSON(t, w, http.StatusNotFound,
+			map[string]string{"message": "Filename " + name + " does not exist."})
+
+		return
+	}
+
+	if _, err := w.Write(object.content); err != nil {
+		t.Errorf("writing file: %v", err)
+	}
+}
+
+// blockObjectStore points presigned URLs at an address nothing listens on.
+func (a *fakeAPI) blockObjectStore() {
+	a.blockObjectStoreFor("")
+}
+
+// blockObjectStoreFor does the same for objects whose name starts with prefix.
+func (a *fakeAPI) blockObjectStoreFor(prefix string) {
+	dead := httptest.NewServer(http.NotFoundHandler())
+	address := dead.URL
+
+	dead.Close()
+
+	a.mu.Lock()
+	a.linkBase = address
+	a.storeScope = prefix
+	a.mu.Unlock()
+}
+
+func (a *fakeAPI) failObjectStore(status int) {
+	a.failObjectStoreFor(status, "")
+}
+
+// failObjectStoreFor makes the object store answer status for objects whose name starts with
+// prefix.
+func (a *fakeAPI) failObjectStoreFor(status int, prefix string) {
+	a.mu.Lock()
+	a.storeStatus = status
+	a.storeScope = prefix
+	a.mu.Unlock()
 }
 
 func (a *fakeAPI) deletePaths(t *testing.T, w http.ResponseWriter, r *http.Request, id string) {

@@ -118,25 +118,22 @@ func (r *downloadRun) fetchPack(ctx context.Context, fetch PackFetch, links map[
 	return transferred, nil
 }
 
-// openSlice fetches one slice, refreshing its presigned URL if it is close to expiry.
-//
-// A pack can take minutes, so starting a slice on a nearly-expired URL invites a 403
-// mid-stream. Refreshing before the fact is cheaper than recovering after it.
+// openSlice opens one slice through the API when reads have moved there, and otherwise through
+// its presigned URL, refreshing the URL when it is close to expiry.
 func (r *downloadRun) openSlice(ctx context.Context, name string, links map[string]drapi.Link) (io.ReadCloser, error) {
+	if r.store.viaAPI.Load() {
+		return r.store.openViaAPI(ctx, name)
+	}
+
 	link, ok := links[name]
 
+	// A pack can take minutes, so a nearly-expired URL would 403 mid-stream.
 	if !ok || link.Expiring() {
-		refreshed, err := r.store.SignedLinks(ctx, []string{name})
-		if err != nil {
+		var err error
+
+		if link, err = r.refreshLink(ctx, name, links); err != nil {
 			return nil, err
 		}
-
-		link, ok = refreshed[name]
-		if !ok {
-			return nil, &StaleManifestError{ObjectName: name}
-		}
-
-		links[name] = link
 	}
 
 	body, _, err := r.store.client.OpenBlob(ctx, link.URL, 0)
@@ -144,26 +141,41 @@ func (r *downloadRun) openSlice(ctx context.Context, name string, links map[stri
 		return body, nil
 	}
 
+	if r.store.fallBack(ctx, err) {
+		return r.store.openViaAPI(ctx, name)
+	}
+
 	if !drapi.IsBlobExpired(err) {
 		return nil, err
 	}
 
 	// The URL lapsed anyway; one refresh and retry, then give up rather than loop.
-	refreshed, refreshErr := r.store.SignedLinks(ctx, []string{name})
-	if refreshErr != nil {
-		return nil, refreshErr
+	link, err = r.refreshLink(ctx, name, links)
+	if err != nil {
+		return nil, err
 	}
-
-	link, ok = refreshed[name]
-	if !ok {
-		return nil, &StaleManifestError{ObjectName: name}
-	}
-
-	links[name] = link
 
 	body, _, err = r.store.client.OpenBlob(ctx, link.URL, 0)
 
 	return body, err
+}
+
+// refreshLink fetches a fresh presigned link for name and stores it in links. It returns a
+// StaleManifestError when the API no longer knows the name.
+func (r *downloadRun) refreshLink(ctx context.Context, name string, links map[string]drapi.Link) (drapi.Link, error) {
+	refreshed, err := r.store.SignedLinks(ctx, []string{name})
+	if err != nil {
+		return drapi.Link{}, err
+	}
+
+	link, ok := refreshed[name]
+	if !ok {
+		return drapi.Link{}, &StaleManifestError{ObjectName: name}
+	}
+
+	links[name] = link
+
+	return link, nil
 }
 
 // stageMember writes one member to the scratch directory, verifying its digest.

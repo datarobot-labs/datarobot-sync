@@ -6,6 +6,7 @@ weight = 6
 | What | Flag | Environment |
 |---|---|---|
 | Container to sync | `--catalog-id` | `DR_SYNC_CATALOG_ID` |
+| Read through the API, not presigned URLs | `--no-presign` | `DR_SYNC_NO_PRESIGN` |
 | API endpoint | `--endpoint` | `DATAROBOT_ENDPOINT` |
 | API token | *(none, deliberately)* | `DATAROBOT_API_TOKEN` |
 | Config file | `--config` | `DATAROBOT_CONFIG` |
@@ -19,6 +20,12 @@ flag names double as config keys, that file can also carry settings for datarobo
 endpoint: https://app.datarobot.com/api/v2
 catalog-id: 68a1f0c9d2e3b4a5c6d7e8f9
 ```
+
+By default datarobot-sync downloads through presigned URLs that point at the object store. Some
+networks, such as a Codespace on an install with a private storage endpoint, reach the API but
+not the store. When a presigned fetch fails with no response at all, datarobot-sync warns once and
+reads through the API instead. Set `--no-presign` or `DR_SYNC_NO_PRESIGN=1` to skip the first
+attempt. An answer from the store, such as a 403, does not trigger the switch.
 
 There is no `--token` flag on purpose: a flag would put the token in the process table
 and the shell history.

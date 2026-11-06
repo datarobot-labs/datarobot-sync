@@ -36,6 +36,12 @@ type Store struct {
 	client      *drapi.Client
 	containerID string
 	metaPrefix  string
+
+	// viaAPI is true once reads go through the Files API, by request or after the object store
+	// proved unreachable.
+	viaAPI atomic.Bool
+	// notify reports the automatic switch to API reads.
+	notify func(message string)
 }
 
 // NewStore wraps a client for one container.
@@ -177,6 +183,23 @@ func (s *Store) LoadManifest(ctx context.Context, ref manifest.Ref) (*manifest.M
 // ReadObject fetches one object's bytes in full. Intended for manifests and leases, which are
 // small; pack content is streamed instead.
 func (s *Store) ReadObject(ctx context.Context, name string) ([]byte, error) {
+	body, err := s.openObject(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	defer body.Close()
+
+	return io.ReadAll(body)
+}
+
+// openObject opens one object from its start, through a presigned URL unless reads have moved
+// to the API.
+func (s *Store) openObject(ctx context.Context, name string) (io.ReadCloser, error) {
+	if s.viaAPI.Load() {
+		return s.openViaAPI(ctx, name)
+	}
+
 	links, err := s.client.SignedLinks(ctx, s.containerID, []string{name}, drapi.LinkLifetime)
 	if err != nil {
 		return nil, err
@@ -188,12 +211,52 @@ func (s *Store) ReadObject(ctx context.Context, name string) ([]byte, error) {
 
 	body, _, err := s.client.OpenBlob(ctx, links[0].URL, 0)
 	if err != nil {
+		if s.fallBack(ctx, err) {
+			return s.openViaAPI(ctx, name)
+		}
+
 		return nil, err
 	}
 
-	defer body.Close()
+	return body, nil
+}
 
-	return io.ReadAll(body)
+// UseAPIReads makes every read go through the Files API instead of presigned URLs, for networks
+// that block the object store.
+func (s *Store) UseAPIReads() {
+	s.viaAPI.Store(true)
+}
+
+// NotifyFallback sets how the store announces that it moved to API reads on its own. Call it
+// before the store is shared between goroutines.
+func (s *Store) NotifyFallback(notify func(message string)) {
+	s.notify = notify
+}
+
+// fallBack moves reads to the API when err shows the object store is unreachable, and reports
+// whether the caller should retry through the API.
+func (s *Store) fallBack(ctx context.Context, err error) bool {
+	if !drapi.IsBlobUnreachable(ctx, err) {
+		return false
+	}
+
+	if !s.viaAPI.Swap(true) && s.notify != nil {
+		s.notify("the object store is not reachable from here, so reads go through the API instead; " +
+			"pass --no-presign to skip the first attempt")
+	}
+
+	return true
+}
+
+// openViaAPI streams one object through the Files API. It returns a StaleManifestError for a
+// name the container no longer holds.
+func (s *Store) openViaAPI(ctx context.Context, name string) (io.ReadCloser, error) {
+	body, _, err := s.client.OpenFile(ctx, s.containerID, name, 0)
+	if drapi.IsMissingFileName(err) {
+		return nil, &StaleManifestError{ObjectName: name}
+	}
+
+	return body, err
 }
 
 // SignedLinks resolves presigned URLs for the named objects, keyed by name.

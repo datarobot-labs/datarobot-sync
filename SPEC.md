@@ -81,6 +81,7 @@ below.
 | V6 | Is `fileChecksum` populated for files *we* upload via a stage, and how soon? | **Yes, immediately** on commit, and it equals SHA-256 of the raw bytes exactly. The free pre-flight integrity check is available. |
 | V7 | Same name twice in one stage? Does `overwrite=error` fail the whole commit? | Duplicate *within* a stage: accepted, deduplicated, last wins. Duplicate against a name **already in the container**: `409 Duplicate file name(s): <name>` and **nothing from that stage lands**. |
 | V8 | Two writers stage the same name in different stages and commit at the same instant. How many commits land? | **Exactly one**: one `200` and one `409`, and the loser's other files never land (50 of 50 rounds, readiness install, 2026-11-06). Name uniqueness inside one `fromStage` commit is a compare-and-swap. |
+| V9 | Can the API return an object's bytes itself, with no presigned URL? | **Yes.** `GET files/{id}/file/?fileName=<name>` answers `200` with the bytes and takes the `Authorization` header. A missing name is `404 Filename <name> does not exist.`, and names containing `/` work as the query value (readiness install, 2026-11-06). In a dev STS Codespace the presigned S3 host timed out while this route worked. |
 
 Also established:
 
@@ -333,7 +334,11 @@ recognizes by content-addressed name and skips; anything never re-run is reaped 
    mechanism**. Refresh any link within 300 s of expiry before starting a slice; on a 403 or
    mid-stream error, re-issue `/links/` for the remainder and resume with
    `Range: bytes=<sliceOffset>-`. A `/links/` batch fails wholesale if any one name is
-   missing, so on that 4xx re-issue singly to name the culprit.
+   missing, so on that 4xx re-issue singly to name the culprit. When the object store cannot
+   be reached, reads go through `GET files/{id}/file/` with credentials instead (V9): on
+   request with `--no-presign`, and on its own after a presigned fetch fails with no HTTP
+   response at all. An answered error such as a 403 never triggers it, so an authorization
+   problem is not hidden behind a fallback.
 6. **Apply** single-threaded in sorted order: `MkdirAll` first, `os.Rename` from the tmp dir
    (which lives under `<root>` precisely so the rename is same-filesystem and atomic),
    symlinks replaced, then `Chmod` then `Chtimes` (mtime last or the write resets it).
@@ -553,8 +558,8 @@ Shared flags: `--catalog-id` (`DR_SYNC_CATALOG_ID`), `--endpoint` (`DATAROBOT_EN
 `--config` (`DATAROBOT_CONFIG`, default `~/.config/datarobot/drconfig.yaml`),
 `--meta-prefix` (`.dr-sync/`), `--check auto|full|size|mtime`, `--exclude`/`--include`/
 `--exclude-from` (gitignore-style, matched on the relative POSIX path), `--jobs`,
-`--timeout`, `--retries`, `-v/--verbose`, `-q/--quiet`, `--output text|json`, `--no-color`,
-`--dry-run`, `--yes`. The token comes from `DATAROBOT_API_TOKEN` or the config file only —
+`--timeout`, `--retries`, `--no-presign` (`DR_SYNC_NO_PRESIGN`), `-v/--verbose`, `-q/--quiet`,
+`--output text|json`, `--no-color`, `--dry-run`, `--yes`. The token comes from `DATAROBOT_API_TOKEN` or the config file only —
 no flag, so it stays out of `ps` and shell history. `--insecure-skip-verify` / `--ca-cert`
 mirror the `dr` global flags (also arriving as `DATAROBOT_CLI_*` env vars).
 

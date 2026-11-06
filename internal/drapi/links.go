@@ -110,7 +110,7 @@ func (c *Client) OpenBlob(ctx context.Context, signedURL string, offset int64) (
 
 	resp, err := c.blob.Do(req)
 	if err != nil {
-		return nil, 0, &transportError{Method: http.MethodGet, Path: "presigned blob", Err: err}
+		return nil, 0, &transportError{Method: http.MethodGet, Path: blobPath, Err: err}
 	}
 
 	if err := checkBlobStatus(resp, offset); err != nil {
@@ -122,8 +122,75 @@ func (c *Client) OpenBlob(ctx context.Context, signedURL string, offset int64) (
 	return resp.Body, resp.ContentLength, nil
 }
 
-// checkBlobStatus validates a presigned response against what was asked for. The caller
-// closes the body; this only inspects it.
+// blobPath marks a presigned fetch in a transport error. IsBlobUnreachable matches it, so
+// OpenFile failures never count as an unreachable store.
+const blobPath = "presigned blob"
+
+// IsBlobUnreachable reports whether err is a presigned fetch that got no HTTP response, which is
+// how a network that blocks the object store looks. It returns false once ctx is done.
+func IsBlobUnreachable(ctx context.Context, err error) bool {
+	// Ask the context, not the error: a dial timeout matches context.DeadlineExceeded, so the
+	// error cannot tell an outage from the caller's own deadline.
+	if ctx.Err() != nil {
+		return false
+	}
+
+	var transportErr *transportError
+
+	return errors.As(err, &transportErr) && transportErr.Path == blobPath
+}
+
+// OpenFile streams one object through the API instead of a presigned URL, optionally from a
+// byte offset, and returns the body. The caller closes it. Unlike a presigned fetch, the request
+// carries the Authorization header, so the client strips it on every redirect.
+func (c *Client) OpenFile(ctx context.Context, containerID, name string, offset int64) (io.ReadCloser, int64, error) {
+	path := fmt.Sprintf("files/%s/file/", url.PathEscape(containerID))
+
+	target, err := c.resolve(path, url.Values{"fileName": {name}})
+	if err != nil {
+		return nil, 0, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("building file request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("User-Agent", c.userAgent)
+
+	if offset > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+	}
+
+	resp, err := c.blob.Do(req)
+	if err != nil {
+		return nil, 0, &transportError{Method: http.MethodGet, Path: path, Err: err}
+	}
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		defer resp.Body.Close()
+
+		// The error body carries the message IsMissingFileName matches.
+		errBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		if readErr != nil {
+			errBody = nil
+		}
+
+		return nil, 0, parseAPIError(http.MethodGet, path, resp, errBody)
+	}
+
+	if err := checkBlobStatus(resp, offset); err != nil {
+		resp.Body.Close()
+
+		return nil, 0, err
+	}
+
+	return resp.Body, resp.ContentLength, nil
+}
+
+// checkBlobStatus validates an object response against the requested offset. The caller closes
+// the body; this only inspects it.
 func checkBlobStatus(resp *http.Response, offset int64) error {
 	if resp.StatusCode == http.StatusOK && offset == 0 {
 		return nil
