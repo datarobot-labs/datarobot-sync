@@ -5,24 +5,29 @@ weight = 8
 
 ## Concurrency: what is guaranteed, what is not
 
-Two clients pushing to one container is guarded, not prevented: the API has no
-compare-and-swap. datarobot-sync takes an advisory lease, revalidates immediately before
-committing, and reports a fork afterwards if one happened. A genuine simultaneous push
-means one side's update is not in the head — detected, never silently corrupted, and
-healed by re-running.
+Two clients pushing to one container is guarded. datarobot-sync takes an advisory lease,
+revalidates immediately before committing, and writes a head claim in the same atomic
+commit as the manifest. Two pushes that plan the same generation collide on the claim:
+one lands, and the other exits with code 4 and changes nothing readers can see. Re-run
+the push to plan against the new head.
 
-Four layers, cheapest first: immutable generation-named objects (structural — no
+Five layers, cheapest first: immutable generation-named objects (structural, so no
 interleaving can produce a dangling or corrupt state), advisory leases (prevents the
-common case), pre-commit revalidation (shrinks the window), post-commit fork detection
-(names both manifest IDs and both writers, and never GCs when a fork is seen).
+common case), pre-commit revalidation (shrinks the window), the head claim (closes it),
+and post-commit fork detection (names both manifest IDs and both writers, and never GCs
+when a fork is seen).
 
 {{< callout type="warning" >}}
-**Lost update.** Two writers both commit generation N+1; lexicographic max wins. The
-loser's packs and manifest both survive intact — nothing is corrupted — but its paths
-are not in the head, so the next puller won't see them. Detected post-commit; healed by
-re-running upload, which re-classifies against the new head and reuses the
-already-uploaded packs. Unfixable without a compare-and-swap primitive.
+**Lost update.** The head claim protects writers that write claims. A writer from before
+claims existed can still commit the same generation as another writer, and the
+lexicographic max wins. The loser's packs and manifest both survive intact, but its
+paths are not in the head, so the next puller won't see them. datarobot-sync reports the
+fork after the fact. Re-running upload heals it: it re-classifies against the new head and
+reuses the already-uploaded packs.
 {{< /callout >}}
+
+A push that loses the race can leave orphan packs, because new packs commit in a stage
+before the manifest. Tier-1 garbage collection removes them, and a re-run reuses them.
 
 `--force` overrides an advisory lease when the holder is known to be gone. A resident
 `watch` process additionally announces itself in `.dr-sync/writers/` — see

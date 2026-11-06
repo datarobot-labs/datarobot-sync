@@ -82,8 +82,9 @@ Verified live against `app.datarobot.com`:
 ## Non-goals
 
 - Crawling or spidering beyond the target directory tree.
-- A mutable pointer object as a lock or CAS token — the API has no compare-and-swap, and
-  a mutable head is exactly where lost updates become corruption.
+- A mutable pointer object as a lock or CAS token — the API has no conditional write, and
+  a mutable head is exactly where lost updates become corruption. The head claim gets the
+  same guarantee from name uniqueness inside one atomic commit.
 - Persistence beyond the remote manifest — local state is never trusted between runs.
 
 See [Concurrency and garbage collection]({{% relref "docs/concurrency" %}}) for what two

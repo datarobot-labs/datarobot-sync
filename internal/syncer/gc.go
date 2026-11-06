@@ -53,6 +53,9 @@ type CollectPlan struct {
 	Manifests []string
 	Packs     []string
 	Leases    []string
+	// Claims is head claims older than every retained manifest. A claim only has to hold
+	// while its generation can still be contended, which ends once the head has moved past it.
+	Claims []string
 	// Writers is stale entries from the resident-writer registry. They sit outside the
 	// pack/manifest reference graph, so nothing else will ever reclaim them.
 	Writers []string
@@ -63,7 +66,7 @@ type CollectPlan struct {
 
 // Names returns every object the plan would delete.
 func (p *CollectPlan) Names() []string {
-	names := make([]string, 0, len(p.Manifests)+len(p.Packs)+len(p.Leases)+len(p.Writers))
+	names := make([]string, 0, len(p.Manifests)+len(p.Packs)+len(p.Leases)+len(p.Claims)+len(p.Writers))
 
 	// Manifests first. The ordering invariant is that a pack may only be deleted after the
 	// last manifest referencing it is gone, so a pass that is interrupted halfway leaves
@@ -73,6 +76,7 @@ func (p *CollectPlan) Names() []string {
 	names = append(names, p.Manifests...)
 	names = append(names, p.Packs...)
 	names = append(names, p.Leases...)
+	names = append(names, p.Claims...)
 	names = append(names, p.Writers...)
 
 	return names
@@ -80,7 +84,8 @@ func (p *CollectPlan) Names() []string {
 
 // Empty reports whether there is nothing to do.
 func (p *CollectPlan) Empty() bool {
-	return len(p.Manifests) == 0 && len(p.Packs) == 0 && len(p.Leases) == 0 && len(p.Writers) == 0
+	return len(p.Manifests) == 0 && len(p.Packs) == 0 && len(p.Leases) == 0 &&
+		len(p.Claims) == 0 && len(p.Writers) == 0
 }
 
 // PlanCollect decides what can be removed, given the current listing.
@@ -132,12 +137,40 @@ func PlanCollect(ctx context.Context, store *Store, state *State, opts CollectOp
 	collectUnreferencedPacks(plan, store, state, referenced, now, grace)
 
 	plan.Leases = StaleLeaseNames(state.Leases, now)
+	plan.Claims = staleClaimNames(state.Claims, plan.Retained)
 	plan.Writers = StaleWriterNames(state.Writers, now)
 
 	sort.Strings(plan.Manifests)
 	sort.Strings(plan.Packs)
 
 	return plan, nil
+}
+
+// staleClaimNames returns the claims below the oldest retained generation.
+//
+// A writer claims the generation after the head, so a claim under every retained manifest can
+// never be contended again. The claim for the head and for each retained generation stays.
+func staleClaimNames(claims []Claim, retained []manifest.Ref) []string {
+	if len(retained) == 0 {
+		return nil
+	}
+
+	oldest := retained[0].Generation
+	for _, ref := range retained[1:] {
+		oldest = min(oldest, ref.Generation)
+	}
+
+	var names []string
+
+	for _, claim := range claims {
+		if claim.Generation < oldest {
+			names = append(names, claim.ObjectName)
+		}
+	}
+
+	sort.Strings(names)
+
+	return names
 }
 
 // collectUnreferencedPacks adds pack objects no retained manifest points at.

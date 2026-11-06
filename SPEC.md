@@ -55,6 +55,8 @@ These are load-bearing. Breaking one is a data-loss or corruption bug, not a sty
 - A pack is uploaded before any manifest referencing it, and deleted only after the last
   manifest referencing it is gone.
 - A manifest is deleted only after a newer one is verified to be the maximum.
+- A manifest commit also stages the claim for its generation, so two writers that plan the
+  same generation collide on the claim name and exactly one commit lands.
 - One `fromStage` commit per run wherever possible — it is the atomicity boundary; when
   split, the manifest commits last.
 - Everything streams. No `io.ReadAll` and no `bytes.Buffer` on file content, ever.
@@ -78,6 +80,7 @@ below.
 | V5 | Max files per stage, and how `fromStage` latency scales? | 200 files in one stage committed in **0.355 s**. Latency is effectively constant in file count. |
 | V6 | Is `fileChecksum` populated for files *we* upload via a stage, and how soon? | **Yes, immediately** on commit, and it equals SHA-256 of the raw bytes exactly. The free pre-flight integrity check is available. |
 | V7 | Same name twice in one stage? Does `overwrite=error` fail the whole commit? | Duplicate *within* a stage: accepted, deduplicated, last wins. Duplicate against a name **already in the container**: `409 Duplicate file name(s): <name>` and **nothing from that stage lands**. |
+| V8 | Two writers stage the same name in different stages and commit at the same instant. How many commits land? | **Exactly one**: one `200` and one `409`, and the loser's other files never land (50 of 50 rounds, readiness install, 2026-11-06). Name uniqueness inside one `fromStage` commit is a compare-and-swap. |
 
 Also established:
 
@@ -134,8 +137,14 @@ transfer zero bytes, "did this change?" as a map lookup, and no path-traversal s
 inside the tar.
 
 Nothing is ever overwritten. There is no mutable pointer object, because the API has no
-compare-and-swap and a mutable head is exactly where lost updates become corruption. The
+conditional write and a mutable head is exactly where lost updates become corruption. The
 head is **derived**: list `.dr-sync/manifests/` and take the lexicographic max.
+
+The compare-and-swap comes from names, not from a pointer. A commit that stages an existing
+name is rejected whole (V7), and two concurrent commits that stage the same name admit exactly
+one (V8). Manifest names carry a random suffix, so they never collide. Each manifest commit
+therefore also stages `.dr-sync/claims/<generation>.claim`, a name that depends only on the
+generation, and a writer that lost the race gets a `409` with nothing applied.
 
 ```
 .dr-sync/README.txt                                  written once, explains the layout to
@@ -145,6 +154,8 @@ head is **derived**: list `.dr-sync/manifests/` and take the lexicographic max.
 .dr-sync/packs/p_9f2a1c8d3e4f5061.tar.xz             p_<sha256(blob)[0:16]>
 .dr-sync/packs/p_1b2c3d4e5f607182.tar.xz.000         sliced when compressed size exceeds
 .dr-sync/packs/p_1b2c3d4e5f607182.tar.xz.001         --slice-size
+.dr-sync/claims/0000000042.claim                     head claim, staged with manifest 42 in
+                                                     one commit; its content is the manifest id
 .dr-sync/locks/<clientId>-<seq>.lock                 advisory lease, 30 min TTL
 .dr-sync/writers/<clientId>-<seq>.json               resident-writer registry (see Watch)
 ```
@@ -263,8 +274,11 @@ immediately valid rather than a special case everywhere. Prints the id and the
    failure. That is the race that actually happens, not the millisecond one at commit time.
 9. **Commit.** One stage: create, upload every not-already-present slice (4 at a time), then
    the manifest, then `fromStage` with `overwrite: "error"` — every name written is unique by
-   construction, so a duplicate means a bug or a concurrent writer and we want to hear about
-   it. `fromStage` normally answers `200` synchronously with
+   construction, except the claim. The manifest stage holds the manifest and
+   `.dr-sync/claims/<generation>.claim`, a name two writers of the same generation share on
+   purpose. A `409` on that stage means another writer took the generation: nothing landed,
+   and the run exits 4. Any other duplicate means a bug or a concurrent writer and we want to
+   hear about it. `fromStage` normally answers `200` synchronously with
    `{catalogId, catalogVersionId, numFiles}` (0.355 s for a 200-file stage), and it is
    **atomic**: on a `409` nothing from the stage lands, so there is no partial-application
    case. If it ever answers with a `Location` instead, fall back to polling with redirects
@@ -280,6 +294,8 @@ immediately valid rather than a special case everywhere. Prints the id and the
 10. **Tier-1 GC** (unless `--no-gc`): delete packs referenced by no retained manifest, older
     than `--gc-grace` (6 h), when no foreign lease is live. Prune manifests beyond
     `--keep-generations` (5) — manifests first, then their orphaned packs, never the reverse.
+    Claims below the oldest retained generation go too; the head's claim and every retained
+    generation's claim stay.
 11. **Advise.** If dead bytes exceed 35% and 64 MiB, print a `dr-sync compact` hint. Never
     auto-compact unless `--auto-compact`.
 
@@ -417,19 +433,23 @@ that — so dead weight accrues as sparse packs over a long session and wants an
 
 ### Concurrency: what is guaranteed, what is not
 
-The API has no conditional write, no ETag, no CAS. `catalogVersionId` is a *change detector*,
-not a guard. Four layers, cheapest first: immutable generation-named objects (structural — no
-interleaving can produce a dangling or corrupt state), advisory leases (prevents the common
-case), pre-commit revalidation (shrinks the window), post-commit fork detection (names both
-`manifestId`s and both `createdBy`s, and never GCs when a fork is seen).
+The API has no conditional write and no ETag. `catalogVersionId` is a *change detector*, not a
+guard. What it does have is atomic, name-unique commits (V7, V8), and the head claim turns
+that into a compare-and-swap on the generation. Five layers, cheapest first: immutable
+generation-named objects (structural — no interleaving can produce a dangling or corrupt
+state), advisory leases (prevents the common case), pre-commit revalidation (shrinks the
+window), the head claim (closes it: of two commits for one generation exactly one lands),
+post-commit fork detection (names both `manifestId`s and both `createdBy`s, and never GCs
+when a fork is seen).
 
 **Races that remain, stated plainly:**
 
-- *Lost update.* Two writers both commit generation N+1; lexicographic max wins. The loser's
-  packs and manifest both survive intact — nothing is corrupted — but its paths are not in
-  the head, so the next puller won't see them. Detected post-commit; healed by re-running
-  upload, which re-classifies against the new head and reuses the already-uploaded packs.
-  Unfixable without CAS.
+- *Lost update.* Closed between writers that stage the head claim: the second commit of a
+  generation gets a `409`, applies nothing and the run exits 4. The loser's new packs may
+  survive as orphans, because they commit in an earlier stage than the manifest; tier-1 GC
+  reaps them and a re-run reuses them. Still open against a writer from before claims
+  existed, which can fork the head with any writer. Post-commit fork detection covers that
+  case, and the heal is the same re-run: it re-classifies against the new head.
 - *Read during compact.* A reader holding manifest N whose packs get deleted gets a missing
   name from `/links/` → exit 5, "re-run". Bounded by the grace window, not eliminated.
 - *Multi-stage commit.* Packs land in earlier catalog versions than the manifest; between

@@ -569,11 +569,10 @@ func (r *uploadRun) commit(ctx context.Context, plan *UploadPlan, built []*packe
 		return nil, err
 	}
 
-	final := []Object{{
-		Name:    next.ObjectName(),
-		Content: encoded,
-		Size:    int64(len(encoded)),
-	}}
+	final := []Object{
+		{Name: next.ObjectName(), Content: encoded, Size: int64(len(encoded))},
+		claimObject(next),
+	}
 
 	uploadStarted := time.Now()
 
@@ -584,14 +583,14 @@ func (r *uploadRun) commit(ctx context.Context, plan *UploadPlan, built []*packe
 		Overwrite:     r.opts.Overwrite,
 		Progress: func(uploaded int, bytes int64) {
 			r.reporter.Update("upload", fmt.Sprintf("[%s] %d/%d objects  %s  %s",
-				progress.Bar(int64(uploaded), int64(len(objects)+1), 24),
-				uploaded, len(objects)+1,
+				progress.Bar(int64(uploaded), int64(len(objects)+len(final)), 24),
+				uploaded, len(objects)+len(final),
 				progress.HumanBytes(bytes),
 				progress.Rate(bytes, time.Since(uploadStarted))))
 		},
 	})
 	if err != nil {
-		return nil, err
+		return nil, r.store.conflictFromCommit(ctx, err, r.parentRef.ID, next.Generation)
 	}
 
 	return next, nil
@@ -671,6 +670,11 @@ type ConflictError struct {
 }
 
 func (e *ConflictError) Error() string {
+	if e.Expected == e.Actual {
+		return fmt.Sprintf("another writer claimed the generation after %s while this run was working; "+
+			"re-run to plan against the new head (or pass --force)", describeGeneration(e.Expected))
+	}
+
 	return fmt.Sprintf("the container advanced from %s to %s while this run was working; "+
 		"re-run to plan against the new head (or pass --force)",
 		describeGeneration(e.Expected), describeGeneration(e.Actual))

@@ -206,6 +206,7 @@ prefix as immutable objects:
 ```
 .dr-sync/manifests/0000000042-7f3a9c2b.json.xz   the file tree, one per push
 .dr-sync/packs/p_9f2a1c8d3e4f5061.tar.xz         contents, named after their own digest
+.dr-sync/claims/0000000042.claim                 head claim, written with the manifest of that generation
 .dr-sync/locks/<client>-<n>.lock                 advisory claims held during a push
 .dr-sync/writers/<client>-<n>.json               resident `watch` processes announcing themselves
 ```
@@ -221,11 +222,12 @@ corrupting.
 
 ## Concurrency
 
-Two clients pushing to one container is guarded, not prevented: the API has no
-compare-and-swap. datarobot-sync takes an advisory lease, revalidates immediately before committing,
-and reports a fork afterwards if one happened. A genuine simultaneous push means one side's
-update is not in the head — detected, never silently corrupted, and healed by re-running.
-`--force` overrides the lease when the holder is known to be gone.
+Two clients pushing to one container is guarded. datarobot-sync takes an advisory lease,
+revalidates immediately before committing, and writes a head claim in the same atomic commit as
+the manifest. Two pushes that plan the same generation collide on the claim: one lands, the other
+exits with code 4 and changes nothing readers can see, and a re-run plans against the new head. A
+client from before claims existed can still fork the head, and datarobot-sync reports the fork
+afterwards. `--force` overrides the lease when the holder is known to be gone.
 
 A resident `watch` process additionally announces itself in `.dr-sync/writers/`, so a peer
 can tell it is active. If the container moves while `watch` is running, it holds back

@@ -69,6 +69,9 @@ type State struct {
 	// recognized from the listing, with no download and no re-upload.
 	Objects map[string]drapi.FileEntry
 	Leases  []Lease
+	// Claims is the head claims, one per generation that has been committed. They are what
+	// makes a manifest commit atomic, so unlike leases they are binding, not advisory.
+	Claims []Claim
 	// Writers is who else is resident on this container, from the writers registry. Advisory
 	// only, like Leases: there is nothing here that enforces anything.
 	Writers []Writer
@@ -94,6 +97,12 @@ func (s *Store) ReadState(ctx context.Context) (*State, error) {
 			ref.Size = entry.Size
 			ref.Checksum = entry.Checksum
 			state.Manifests = append(state.Manifests, ref)
+
+			continue
+		}
+
+		if generation, ok := manifest.ParseClaimObjectName(s.metaPrefix, entry.Name); ok {
+			state.Claims = append(state.Claims, Claim{ObjectName: entry.Name, Generation: generation})
 
 			continue
 		}
