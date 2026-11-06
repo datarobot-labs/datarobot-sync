@@ -46,8 +46,8 @@ func claimNames(h *harness) []string {
 	return names
 }
 
-// claimGeneration commits a claim for a generation without a manifest, the way a writer that
-// won the race would have left it.
+// claimGeneration commits a claim for generation with no manifest, so a later commit for that
+// generation is rejected.
 func claimGeneration(t *testing.T, h *harness, generation int64) {
 	t.Helper()
 
@@ -84,7 +84,7 @@ func TestUploadRefusesAGenerationAnotherWriterClaimed(t *testing.T) {
 
 	manifestsBefore := h.api.countObjects(h.containerID, ".dr-sync/manifests/")
 
-	// A competing writer committed generation 2 between this run's revalidation and its commit.
+	// Revalidation compares heads and ignores claims, so only the commit sees this claim.
 	claimGeneration(t, h, 2)
 	writeInto(t, source, map[string]string{"a.txt": "two"})
 
@@ -104,6 +104,57 @@ func TestUploadRefusesAGenerationAnotherWriterClaimed(t *testing.T) {
 	destination := t.TempDir()
 	h.download(t, destination)
 	assert.Equal(t, map[string]string{"a.txt": "one"}, readTree(t, destination))
+}
+
+// --overwrite replace is for packs. The manifest stage must still reject a claimed generation.
+func TestUploadWithOverwriteReplaceStillRefusesAClaimedGeneration(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	source := writeTree(t, map[string]string{"a.txt": "one"})
+	h.upload(t, source, func(o *syncer.UploadOptions) { o.NoGC = true })
+
+	manifestsBefore := h.api.countObjects(h.containerID, ".dr-sync/manifests/")
+
+	claimGeneration(t, h, 2)
+	writeInto(t, source, map[string]string{"a.txt": "two"})
+
+	_, err := syncer.Upload(context.Background(), h.store, progress.Discard(), syncer.UploadOptions{
+		Root: source, Level: manifest.DefaultLevel, Lock: true, NoGC: true, Overwrite: drapi.OverwriteReplace,
+	})
+
+	require.True(t, syncer.IsConflict(err), "got %v", err)
+	assert.Equal(t, manifestsBefore, h.api.countObjects(h.containerID, ".dr-sync/manifests/"))
+}
+
+// Compaction races an upload for the same generation, so it needs the claim as much as upload does.
+func TestCompactRefusesAGenerationAnotherWriterClaimed(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	source := writeTree(t, map[string]string{
+		"keep.txt":  strings.Repeat("keep this content ", 300),
+		"churn.txt": strings.Repeat("original ", 300),
+	})
+
+	h.upload(t, source, func(o *syncer.UploadOptions) { o.NoGC = true })
+
+	for i := range 3 {
+		writeInto(t, source, map[string]string{"churn.txt": strings.Repeat("revision ", 300) + string(rune('a'+i))})
+		h.upload(t, source, func(o *syncer.UploadOptions) { o.NoGC = true; o.Delete = true })
+	}
+
+	// The head is generation 4, so compaction commits generation 5.
+	claimGeneration(t, h, 5)
+
+	manifestsBefore := h.api.countObjects(h.containerID, ".dr-sync/manifests/")
+
+	_, err := syncer.Compact(context.Background(), h.store, progress.Discard(), syncer.CompactOptions{
+		Root: source, Threshold: 0.9, KeepGenerations: 5, Level: manifest.DefaultLevel,
+	})
+
+	require.True(t, syncer.IsConflict(err), "got %v", err)
+	assert.Equal(t, manifestsBefore, h.api.countObjects(h.containerID, ".dr-sync/manifests/"))
 }
 
 func TestUploadSucceedsOnAContainerWrittenWithoutClaims(t *testing.T) {

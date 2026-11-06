@@ -625,11 +625,8 @@ func (r *uploadRun) describePack(pack *packer.Built) (manifest.Pack, []Object) {
 	return record, objects
 }
 
-// revalidate re-checks that nothing moved under us just before the manifest is written.
-//
-// This shrinks the window rather than closing it — the API has no compare-and-swap — but it
-// converts the common case of two clients pushing minutes apart into an immediate, legible
-// refusal instead of a silently lost update.
+// revalidate refuses early when the head moved or a referenced pack vanished. The head claim in
+// the commit, not this check, decides a race.
 func (r *uploadRun) revalidate(ctx context.Context, next *manifest.Manifest, pending map[string]bool) error {
 	state, err := r.store.ReadState(ctx)
 	if err != nil {
@@ -672,7 +669,7 @@ type ConflictError struct {
 func (e *ConflictError) Error() string {
 	if e.Expected == e.Actual {
 		return fmt.Sprintf("another writer claimed the generation after %s while this run was working; "+
-			"re-run to plan against the new head (or pass --force)", describeGeneration(e.Expected))
+			"re-run to plan against the new head", describeGeneration(e.Expected))
 	}
 
 	return fmt.Sprintf("the container advanced from %s to %s while this run was working; "+

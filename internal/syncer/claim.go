@@ -28,15 +28,13 @@ type Claim struct {
 	Generation int64
 }
 
-// claimObject returns the claim that goes into the same commit as a manifest.
-//
-// The claim name depends only on the generation, so two writers that plan the same next
-// generation stage the same name. `fromStage` rejects a commit that names an existing object
-// and applies none of it, which makes the claim the compare-and-swap on the head: exactly one
-// of the two commits lands, and the loser's manifest never becomes visible.
+// claimObject returns the claim object that goes into the same commit as next.
 func claimObject(next *manifest.Manifest) Object {
 	content := []byte(next.ID)
 
+	// The name depends only on the generation, so two writers planning the same generation
+	// collide. With overwrite=error, fromStage rejects the second commit whole, which makes the
+	// claim a compare-and-swap on the head.
 	return Object{
 		Name:    manifest.ClaimName(next.Prefix(), next.Generation),
 		Content: content,
@@ -44,12 +42,9 @@ func claimObject(next *manifest.Manifest) Object {
 	}
 }
 
-// conflictFromCommit turns a rejected manifest commit into a ConflictError when another writer
-// got there first.
-//
-// A 409 can also come from a pack name that a concurrent writer uploaded first, which is not
-// a lost update, so the container is read again and the error is only converted when the head
-// moved or the generation is already claimed. Anything else is returned as it came.
+// conflictFromCommit returns a ConflictError when commitErr is a 409 and the head moved or the
+// generation is already claimed. Any other error, including a failed re-read, is returned
+// unchanged.
 func (s *Store) conflictFromCommit(ctx context.Context, commitErr error, expectedHeadID string, generation int64) error {
 	if !drapi.IsConflict(commitErr) {
 		return commitErr
@@ -66,6 +61,7 @@ func (s *Store) conflictFromCommit(ctx context.Context, commitErr error, expecte
 		return claim.Generation == generation
 	})
 
+	// A 409 can also mean a pack name another writer uploaded first, which is not a lost update.
 	if !moved && !claimed {
 		return commitErr
 	}

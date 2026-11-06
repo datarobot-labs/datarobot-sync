@@ -16,7 +16,6 @@ package syncer
 
 import "context"
 
-// ConflictFromCommit exposes conflictFromCommit to the external tests.
 func ConflictFromCommit(ctx context.Context, store *Store, commitErr error, expectedHeadID string, generation int64) error {
 	return store.conflictFromCommit(ctx, commitErr, expectedHeadID, generation)
 }

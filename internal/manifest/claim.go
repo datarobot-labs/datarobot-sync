@@ -21,20 +21,12 @@ import (
 	"strings"
 )
 
-// claimDigits is the zero-padded width of a generation in a claim name, the same width the
-// manifest id uses, so claims sort like manifests.
+// claimDigits is the zero-padded generation width, the same as in a manifest id.
 const claimDigits = 10
 
-// claimSuffix ends every claim object name.
 const claimSuffix = ".claim"
 
 // ClaimsPrefix is the directory holding head claims, with a trailing slash.
-//
-// A claim is a small object named only by generation. It is written in the same atomic
-// commit as the manifest for that generation, and a commit that names an existing object is
-// rejected whole. Two writers that both plan the next generation therefore collide on the
-// claim name and exactly one commit lands, which is the compare-and-swap that the unique
-// manifest names cannot provide.
 func ClaimsPrefix(metaPrefix string) string {
 	return path.Join(strings.TrimSuffix(metaPrefix, "/"), claimsDir) + "/"
 }
@@ -44,8 +36,8 @@ func ClaimName(metaPrefix string, generation int64) string {
 	return fmt.Sprintf("%s%0*d%s", ClaimsPrefix(metaPrefix), claimDigits, generation, claimSuffix)
 }
 
-// ParseClaimObjectName reads the generation from a claim object name. It reports false for
-// anything that is not a claim under this prefix, so a stray object never reads as one.
+// ParseClaimObjectName reads the generation from a claim object name and reports false for any
+// other object.
 func ParseClaimObjectName(metaPrefix, objectName string) (int64, bool) {
 	prefix := ClaimsPrefix(metaPrefix)
 

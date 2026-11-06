@@ -53,8 +53,7 @@ type CollectPlan struct {
 	Manifests []string
 	Packs     []string
 	Leases    []string
-	// Claims is head claims older than every retained manifest. A claim only has to hold
-	// while its generation can still be contended, which ends once the head has moved past it.
+	// Claims is the head claims below the oldest retained generation.
 	Claims []string
 	// Writers is stale entries from the resident-writer registry. They sit outside the
 	// pack/manifest reference graph, so nothing else will ever reclaim them.
@@ -70,9 +69,9 @@ func (p *CollectPlan) Names() []string {
 
 	// Manifests first. The ordering invariant is that a pack may only be deleted after the
 	// last manifest referencing it is gone, so a pass that is interrupted halfway leaves
-	// packs without a manifest rather than a manifest without its packs. Leases and writers
-	// are both advisory and unreferenced by anything, so their order relative to the rest
-	// does not matter.
+	// packs without a manifest rather than a manifest without its packs. Leases, claims and
+	// writers are unreferenced by anything, so their order relative to the rest does not
+	// matter.
 	names = append(names, p.Manifests...)
 	names = append(names, p.Packs...)
 	names = append(names, p.Leases...)
@@ -90,9 +89,9 @@ func (p *CollectPlan) Empty() bool {
 
 // PlanCollect decides what can be removed, given the current listing.
 //
-// Only two things are ever deleted: manifests beyond the retention count, and objects no
-// retained manifest references. Nothing is rewritten, so this pass moves no data and can run
-// after every push.
+// It plans the deletion of manifests beyond the retention count, objects no retained manifest
+// references, and stale leases, claims and writers. Nothing is rewritten, so this pass moves
+// no data and can run after every push.
 func PlanCollect(ctx context.Context, store *Store, state *State, opts CollectOptions) (*CollectPlan, error) {
 	keep := opts.KeepGenerations
 	if keep <= 0 {
@@ -146,15 +145,14 @@ func PlanCollect(ctx context.Context, store *Store, state *State, opts CollectOp
 	return plan, nil
 }
 
-// staleClaimNames returns the claims below the oldest retained generation.
-//
-// A writer claims the generation after the head, so a claim under every retained manifest can
-// never be contended again. The claim for the head and for each retained generation stays.
+// staleClaimNames returns the claims for generations below the oldest retained manifest.
 func staleClaimNames(claims []Claim, retained []manifest.Ref) []string {
 	if len(retained) == 0 {
 		return nil
 	}
 
+	// A writer claims the generation after the head, so a claim below every retained manifest
+	// cannot be contended again.
 	oldest := retained[0].Generation
 	for _, ref := range retained[1:] {
 		oldest = min(oldest, ref.Generation)

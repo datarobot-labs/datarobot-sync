@@ -276,7 +276,8 @@ immediately valid rather than a special case everywhere. Prints the id and the
    the manifest, then `fromStage` with `overwrite: "error"` — every name written is unique by
    construction, except the claim. The manifest stage holds the manifest and
    `.dr-sync/claims/<generation>.claim`, a name two writers of the same generation share on
-   purpose. A `409` on that stage means another writer took the generation: nothing landed,
+   purpose. That stage uses `overwrite: "error"` even under `--overwrite replace`, which applies to
+   pack stages only. A `409` on that stage means another writer took the generation: nothing landed,
    and the run exits 4. Any other duplicate means a bug or a concurrent writer and we want to
    hear about it. `fromStage` normally answers `200` synchronously with
    `{catalogId, catalogVersionId, numFiles}` (0.355 s for a 200-file stage), and it is

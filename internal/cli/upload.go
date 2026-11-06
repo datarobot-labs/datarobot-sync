@@ -97,7 +97,7 @@ func (u *uploadFlags) register(cmd *cobra.Command, deleteDefault bool) {
 	flags.IntVar(&u.maxStageFiles, "max-stage-files", 0, "objects per commit (default 500)")
 	flags.Var(bytesFlag{&u.maxStageBytes}, "max-stage-bytes", "bytes per commit (default 4GiB)")
 	flags.StringVar(&u.overwrite, "overwrite", string(drapi.OverwriteError),
-		"what to do if a name already exists: error or replace")
+		"what to do if a pack name already exists: error or replace (the manifest stage always uses error)")
 	flags.IntVar(&u.keepGenerations, "keep-generations", 0, "manifests to retain (default 5)")
 	flags.DurationVar(&u.gcGrace, "gc-grace", 0,
 		"leave unreferenced objects alone for this long (default 6h)")

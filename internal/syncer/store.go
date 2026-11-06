@@ -69,8 +69,7 @@ type State struct {
 	// recognized from the listing, with no download and no re-upload.
 	Objects map[string]drapi.FileEntry
 	Leases  []Lease
-	// Claims is the head claims, one per generation that has been committed. They are what
-	// makes a manifest commit atomic, so unlike leases they are binding, not advisory.
+	// Claims is the head claims in the listing. Unlike Leases and Writers, they are binding.
 	Claims []Claim
 	// Writers is who else is resident on this container, from the writers registry. Advisory
 	// only, like Leases: there is nothing here that enforces anything.
@@ -303,30 +302,25 @@ type CommitOptions struct {
 
 // Commit uploads bulk objects and then final ones, applying them to the container.
 //
-// The split is the ordering invariant made explicit: a pack must be committed before any
-// manifest that references it. When everything fits in one stage the whole run is a single
-// atomic commit; when it does not, the packs land first and the manifest goes last and alone,
-// so the worst case is orphan packs no reader can see rather than a manifest pointing at
-// objects that are not there.
+// A pack must be committed before any manifest that references it, so the bulk objects land in
+// their own stages first and the final objects go last, in one stage. The worst case is orphan
+// packs no reader can see, never a manifest pointing at objects that are not there.
+//
+// The final stage always uses overwrite=error, whatever opts.Overwrite says: it carries the
+// head claim, and a replaced claim would let two writers commit the same generation.
 func (s *Store) Commit(ctx context.Context, bulk, final []Object, opts CommitOptions) error {
-	batches := batchObjects(bulk, opts)
-
-	if len(final) > 0 {
-		if len(batches) == 0 {
-			// Everything fits together: one stage, one atomic commit.
-			batches = [][]Object{final}
-		} else {
-			batches = append(batches, final)
-		}
+	overwrite := opts.Overwrite
+	if overwrite == "" {
+		overwrite = drapi.OverwriteError
 	}
 
-	for _, batch := range batches {
-		if err := s.commitBatch(ctx, batch, opts); err != nil {
+	for _, batch := range batchObjects(bulk, opts) {
+		if err := s.commitBatch(ctx, batch, opts, overwrite); err != nil {
 			return err
 		}
 	}
 
-	return nil
+	return s.commitBatch(ctx, final, opts, drapi.OverwriteError)
 }
 
 // batchObjects splits objects into stages that respect the file and byte caps.
@@ -381,7 +375,7 @@ const (
 )
 
 // commitBatch uploads one stage's worth of objects and applies it.
-func (s *Store) commitBatch(ctx context.Context, objects []Object, opts CommitOptions) error {
+func (s *Store) commitBatch(ctx context.Context, objects []Object, opts CommitOptions, overwrite drapi.OverwriteStrategy) error {
 	if len(objects) == 0 {
 		return nil
 	}
@@ -422,11 +416,6 @@ func (s *Store) commitBatch(ctx context.Context, objects []Object, opts CommitOp
 		// The stage is abandoned rather than committed. Nothing becomes visible, so a re-run
 		// simply plans again.
 		return err
-	}
-
-	overwrite := opts.Overwrite
-	if overwrite == "" {
-		overwrite = drapi.OverwriteError
 	}
 
 	_, err = s.client.CommitStage(ctx, s.containerID, stage.StageID, overwrite)
