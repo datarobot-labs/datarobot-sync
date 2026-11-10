@@ -309,13 +309,8 @@ type CommitOptions struct {
 // The final stage always uses overwrite=error, whatever opts.Overwrite says: it carries the
 // head claim, and a replaced claim would let two writers commit the same generation.
 func (s *Store) Commit(ctx context.Context, bulk, final []Object, opts CommitOptions) error {
-	overwrite := opts.Overwrite
-	if overwrite == "" {
-		overwrite = drapi.OverwriteError
-	}
-
 	for _, batch := range batchObjects(bulk, opts) {
-		if err := s.commitBatch(ctx, batch, opts, overwrite); err != nil {
+		if err := s.commitBatch(ctx, batch, opts, opts.Overwrite); err != nil {
 			return err
 		}
 	}
