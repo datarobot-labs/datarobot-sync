@@ -1,0 +1,128 @@
+name: Windows plugin smoke
+
+on:
+  push:
+    branches: [andriykislitsyn/LAB-143-windows-plugin-smoke]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Task
+        uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install the dr CLI
+        run: |
+          set -o pipefail
+          curl -fsSL https://raw.githubusercontent.com/datarobot-oss/cli/d3fdb737e570a619e1f3944848f8e74adb701009/install.sh \
+            | INSTALL_DIR="$HOME/.local/bin" sh -s -- v0.12.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Package the dr plugin archive
+        run: task plugin:package
+
+      - name: Keep the archive for the Windows job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plugin-archive
+          path: dist/sync-*.tar.xz
+          if-no-files-found: error
+
+  windows-plugin:
+    needs: package
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Download the archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plugin-archive
+
+      - name: Install the dr CLI
+        run: |
+          $env:VERSION = 'v0.19.0'
+          irm https://raw.githubusercontent.com/datarobot-oss/cli/d3fdb737e570a619e1f3944848f8e74adb701009/install.ps1 | iex
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:LOCALAPPDATA\Programs\dr"
+
+      - name: Install the plugin from the archive
+        run: |
+          $archive = (Get-ChildItem sync-*.tar.xz | Select-Object -First 1).FullName
+          dr plugin install sync --file $archive
+          if ($LASTEXITCODE -ne 0) { throw "plugin install exited $LASTEXITCODE" }
+
+      - name: The plugin is listed
+        run: |
+          $out = dr plugin list | Out-String
+          Write-Host $out
+          if ($out -notmatch 'sync') { throw 'dr plugin list does not show sync' }
+
+      - name: Help goes through the PowerShell wrapper
+        run: |
+          $out = dr sync --help | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) { throw "dr sync --help exited $LASTEXITCODE" }
+          if ($out -notmatch 'upload') { throw 'the help text does not list upload' }
+
+      - name: Exit code and arguments pass through the wrapper
+        run: |
+          $env:DATAROBOT_ENDPOINT = 'http://127.0.0.1:9/api/v2'
+          $env:DATAROBOT_API_TOKEN = 'unused'
+          $exe = Get-ChildItem -Path $env:APPDATA, $env:LOCALAPPDATA, $HOME -Recurse -Filter 'dr-sync-windows-amd64.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw 'the installed plugin has no dr-sync-windows-amd64.exe' }
+          $dir = Join-Path $env:RUNNER_TEMP 'dir with space'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $id = '000000000000000000000000'
+
+          $direct = (& $exe.FullName upload $dir --catalog-id $id 2>&1 | Out-String)
+          $directCode = $LASTEXITCODE
+          $viaDr = (dr --skip-auth --skip-plugin-update-check --disable-telemetry sync upload $dir --catalog-id $id 2>&1 | Out-String)
+          $viaDrCode = $LASTEXITCODE
+          Write-Host "direct ($directCode):`n$direct`nthrough dr ($viaDrCode):`n$viaDr"
+
+          if ($directCode -eq 0) { throw 'upload against a closed port should fail' }
+          if ($viaDrCode -ne $directCode) { throw "exit code changed: direct $directCode, through dr $viaDrCode" }
+          $strip = { param($text) (($text -split "`r?`n" | Where-Object { $_ -notmatch 'Running plugin' }) -join "`n").Trim() }
+          if ((& $strip $direct) -ne (& $strip $viaDr)) { throw 'the output through dr differs from the direct output' }
+
+  go-test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    # Informative: a failure here points at Windows-specific code paths, not at the plugin wrapper.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test -count=1 ./internal/... ./cmd/...
