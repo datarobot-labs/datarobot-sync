@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +30,7 @@ func isolate(t *testing.T) {
 	t.Helper()
 
 	for _, name := range []string{
-		EnvEndpoint, EnvToken, EnvConfig, EnvCatalogID,
+		EnvEndpoint, EnvToken, EnvConfig, EnvCatalogID, EnvNoPresign,
 		EnvCLIDebug, EnvCLIVerbose, EnvCLISkipCertific, EnvCLICACert,
 		EnvSSLCertFile, EnvPluginMode, "XDG_CONFIG_HOME", "HOME",
 	} {
@@ -210,6 +211,41 @@ func TestInsecureOverrideCanTurnOffTheEnvironment(t *testing.T) {
 	resolved, err := Resolve(Overrides{InsecureSkipVerify: &off})
 	require.NoError(t, err)
 	assert.False(t, resolved.InsecureSkipVerify, "an explicit false must beat the inherited flag")
+}
+
+func TestNoPresignComesFromTheEnvironmentOrTheFlag(t *testing.T) {
+	cases := []struct {
+		name string
+		env  string
+		args []string
+		want bool
+	}{
+		{name: "off by default", want: false},
+		{name: "the environment turns it on", env: "1", want: true},
+		{name: "the flag turns it on", args: []string{"--no-presign"}, want: true},
+		{name: "a false environment value stays off", env: "false", want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			isolate(t)
+			t.Setenv(EnvEndpoint, "https://x.example/api/v2")
+			t.Setenv(EnvToken, "t")
+			t.Setenv(EnvNoPresign, tc.env)
+
+			flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+			flags.Bool(KeyNoPresign, false, "")
+			require.NoError(t, flags.Parse(tc.args))
+
+			binding, err := BindFlags(flags)
+			require.NoError(t, err)
+
+			resolved, err := binding.Resolve()
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.want, resolved.NoPresign)
+		})
+	}
 }
 
 func TestUnparseableConfigFileIsReported(t *testing.T) {

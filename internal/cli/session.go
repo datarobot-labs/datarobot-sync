@@ -58,6 +58,8 @@ type globalFlags struct {
 	yes      bool
 	caCert   string
 	insecure bool
+
+	noPresign bool
 }
 
 // register adds the persistent flags. The names double as viper keys, so drconfig.yaml can
@@ -93,6 +95,9 @@ func (g *globalFlags) register(flags *pflag.FlagSet) {
 	flags.StringVar(&g.caCert, config.KeyCACert, "",
 		"PEM bundle of extra certificate authorities to trust")
 	flags.BoolVarP(&g.insecure, config.KeyInsecure, "k", false, "do not verify TLS certificates")
+	flags.BoolVar(&g.noPresign, config.KeyNoPresign, false,
+		"read through the API instead of presigned URLs, for networks that block the object store (env "+
+			config.EnvNoPresign+")")
 }
 
 // session is everything a command needs to talk to a container.
@@ -152,11 +157,19 @@ func (g *globalFlags) open(cmd *cobra.Command, requireCatalog bool, root string)
 		return nil, Fail(CodeUsage, err)
 	}
 
+	store := syncer.NewStore(client, resolved.CatalogID, g.metaPrefix)
+	if resolved.NoPresign {
+		store.UseAPIReads()
+	}
+
+	reporter := g.newReporter(cmd, mode)
+	store.NotifyFallback(reporter.Warn)
+
 	return &session{
 		resolved: resolved,
 		client:   client,
-		store:    syncer.NewStore(client, resolved.CatalogID, g.metaPrefix),
-		reporter: g.newReporter(cmd, mode),
+		store:    store,
+		reporter: reporter,
 		matcher:  matcher,
 		check:    check,
 	}, nil

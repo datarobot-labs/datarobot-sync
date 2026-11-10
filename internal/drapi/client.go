@@ -58,8 +58,8 @@ type Client struct {
 	token     string
 	userAgent string
 	http      *http.Client
-	// blob is used for presigned URLs. It is a distinct client with no credentials because
-	// sending an Authorization header alongside a presigned signature returns 400.
+	// blob serves presigned URLs and API file reads. It holds no credentials: a presigned fetch
+	// must not send an Authorization header (S3 answers 400), and an API read sets its own.
 	blob       *http.Client
 	maxRetries int
 }

@@ -93,6 +93,7 @@ See [`docs/quickstart.md`](docs/quickstart.md) for a full walkthrough, including
 | What | Flag | Environment |
 |---|---|---|
 | Container to sync | `--catalog-id` | `DR_SYNC_CATALOG_ID` |
+| Read through the API, not presigned URLs | `--no-presign` | `DR_SYNC_NO_PRESIGN` |
 | API endpoint | `--endpoint` | `DATAROBOT_ENDPOINT` |
 | API token | *(none, deliberately)* | `DATAROBOT_API_TOKEN` |
 | Config file | `--config` | `DATAROBOT_CONFIG` |

@@ -47,6 +47,8 @@ const (
 	EnvConfig = "DATAROBOT_CONFIG"
 	// EnvCatalogID names the container to sync, so a CI job can set it once.
 	EnvCatalogID = "DR_SYNC_CATALOG_ID"
+	// EnvNoPresign is the environment form of --no-presign.
+	EnvNoPresign = "DR_SYNC_NO_PRESIGN"
 
 	// The CLI forwards its universal flags as environment variables when they appear before
 	// the plugin name.
@@ -68,6 +70,7 @@ const (
 	KeyCatalogID  = "catalog-id"
 	KeyCACert     = "ca-cert"
 	KeyInsecure   = "insecure-skip-verify"
+	KeyNoPresign  = "no-presign"
 	KeyConfigFile = "config"
 )
 
@@ -81,8 +84,10 @@ type Resolved struct {
 	// CACertFile and InsecureSkipVerify mirror the CLI's TLS flags.
 	CACertFile         string
 	InsecureSkipVerify bool
-	Verbose            bool
-	Debug              bool
+	// NoPresign makes reads go through the API instead of presigned URLs.
+	NoPresign bool
+	Verbose   bool
+	Debug     bool
 }
 
 // Overrides are the values a caller supplied explicitly, which win over everything else.
@@ -114,6 +119,7 @@ func newViper(configFile string) (*viper.Viper, string, error) {
 		KeyEndpoint:  EnvEndpoint,
 		KeyToken:     EnvToken,
 		KeyCatalogID: EnvCatalogID,
+		KeyNoPresign: EnvNoPresign,
 	}
 
 	for key, variable := range bindings {
@@ -298,7 +304,7 @@ func BindFlags(flags *pflag.FlagSet) (*Binding, error) {
 		return nil, err
 	}
 
-	for _, key := range []string{KeyEndpoint, KeyCatalogID, KeyCACert, KeyInsecure} {
+	for _, key := range []string{KeyEndpoint, KeyCatalogID, KeyCACert, KeyInsecure, KeyNoPresign} {
 		flag := flags.Lookup(key)
 		if flag == nil {
 			continue
@@ -326,6 +332,7 @@ func (b *Binding) Resolve() (*Resolved, error) {
 		Token:      strings.TrimSpace(b.viper.GetString(KeyToken)),
 		CatalogID:  strings.TrimSpace(b.viper.GetString(KeyCatalogID)),
 		CACertFile: strings.TrimSpace(b.viper.GetString(KeyCACert)),
+		NoPresign:  b.viper.GetBool(KeyNoPresign),
 		Source:     "environment",
 	}
 
