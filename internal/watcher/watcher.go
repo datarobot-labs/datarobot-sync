@@ -638,13 +638,11 @@ func (w *Watcher) unmarkWatchedTree(path string) {
 	}
 }
 
-// excluded applies the same rules a scan does: dr-sync's own state and the download scratch
-// directory are excluded at the root only, everything else defers to the matcher.
+// excluded applies the same rules a scan does: dr-sync's own state and the download scratch and
+// backup directories are excluded at the root only, everything else defers to the matcher.
 func (w *Watcher) excluded(rel string, isDir bool) bool {
-	for _, reserved := range [...]string{w.metaDir, scan.TempDirName, scan.BackupDirName} {
-		if rel == reserved || strings.HasPrefix(rel, reserved+"/") {
-			return true
-		}
+	if rel == w.metaDir || strings.HasPrefix(rel, w.metaDir+"/") || scan.IsScratchPath(rel) {
+		return true
 	}
 
 	matcher := w.matcher.Load()

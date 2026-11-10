@@ -88,14 +88,8 @@ func (r *downloadRun) unusable(entry manifest.Entry) string {
 		return "path is inside the reserved dr-sync prefix"
 	}
 
-	// Compared without case: on a filesystem that ignores it, a differently cased spelling is the
-	// same directory.
-	root, _, _ := strings.Cut(entry.Path, "/")
-
-	for _, reserved := range [...]string{scan.TempDirName, scan.BackupDirName} {
-		if strings.EqualFold(root, reserved) {
-			return "path collides with the download scratch or backup directory"
-		}
+	if scan.IsScratchPath(entry.Path) {
+		return "path collides with the download scratch or backup directory"
 	}
 
 	if entry.Type == manifest.TypeSymlink && !r.opts.AllowUnsafeLinks {

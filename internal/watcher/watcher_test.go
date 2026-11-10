@@ -460,3 +460,20 @@ func TestWatcherNeverWatchesTheBackupDirectory(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(backup, "kept.txt"), []byte("x"), 0o600))
 	assertNoTrigger(t, triggers, 300*time.Millisecond)
 }
+
+func TestWatcherNeverWatchesTheBackupDirectoryInAnyCase(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	backup := filepath.Join(root, strings.ToUpper(scan.BackupDirName), "20260101T000000.000000Z")
+	require.NoError(t, os.MkdirAll(backup, 0o755))
+
+	w, triggers := startWatcher(t, Options{Root: root})
+
+	for _, watched := range w.Watched() {
+		assert.NotContains(t, strings.ToLower(watched), scan.BackupDirName, "the backup directory must never be watched")
+	}
+
+	require.NoError(t, os.WriteFile(filepath.Join(backup, "kept.txt"), []byte("x"), 0o600))
+	assertNoTrigger(t, triggers, 300*time.Millisecond)
+}

@@ -233,12 +233,10 @@ func (w *treeWalker) visit(absPath string, dirEntry fs.DirEntry, err error) erro
 // excluded reports whether a path is out of scope: dr-sync's own state, the download scratch
 // directory, or something the ignore rules exclude.
 func (w *treeWalker) excluded(normalized string, isDir bool) bool {
-	// The reserved directory and the scratch directory are matched at the root only, so a
+	// The reserved directory and the scratch directories are matched at the root only, so a
 	// nested vendor/x/.dr-sync/ of the user's own still syncs normally.
-	for _, reserved := range [...]string{w.metaDir, TempDirName, BackupDirName} {
-		if normalized == reserved || strings.HasPrefix(normalized, reserved+"/") {
-			return true
-		}
+	if normalized == w.metaDir || strings.HasPrefix(normalized, w.metaDir+"/") || IsScratchPath(normalized) {
+		return true
 	}
 
 	return w.opts.Matcher != nil && w.opts.Matcher.Match(normalized, isDir)
@@ -352,6 +350,15 @@ const TempDirName = ".dr-sync-tmp"
 // BackupDirName is where `download --backup` keeps replaced or removed local files, in one
 // subdirectory per run. It is reserved like TempDirName, so scans skip it.
 const BackupDirName = ".dr-sync-backup"
+
+// IsScratchPath reports whether a slash-separated path is the download scratch directory or the
+// backup directory, or lies under one. The root component is compared without case, because on a
+// filesystem that ignores case another spelling is the same directory.
+func IsScratchPath(path string) bool {
+	root, _, _ := strings.Cut(path, "/")
+
+	return strings.EqualFold(root, TempDirName) || strings.EqualFold(root, BackupDirName)
+}
 
 // DefaultJobs is the hashing concurrency when none is requested. Capped because hashing is
 // I/O bound and more readers past a point just add seek contention.
