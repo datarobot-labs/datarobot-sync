@@ -25,6 +25,11 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The plugin archive takes its version from manifest.json, so a tag that differs from it
+      # would publish the wrong version.
+      - name: Check the plugin manifest matches the tag
+        run: ./scripts/check-plugin-manifest.sh
+
       # arm64 images are built under emulation on an amd64 runner.
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
