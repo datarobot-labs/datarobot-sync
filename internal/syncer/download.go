@@ -362,15 +362,28 @@ func (r *downloadRun) prepareTempDir() error {
 	// os.Rename, which is only atomic within one filesystem.
 	base := filepath.Join(r.opts.Root, scan.TempDirName)
 
-	if r.opts.TempDir != "" {
-		base = r.opts.TempDir
+	if r.opts.TempDir == "" {
+		if err := os.MkdirAll(base, 0o700); err != nil {
+			return fmt.Errorf("creating scratch directory %s: %w", base, err)
+		}
+
+		r.tempDir = base
+
+		return nil
 	}
 
-	if err := os.MkdirAll(base, 0o700); err != nil {
-		return fmt.Errorf("creating scratch directory %s: %w", base, err)
+	// A caller-chosen directory may hold other files, or the backups, so the run works in a
+	// private subdirectory and removes only that.
+	if err := os.MkdirAll(r.opts.TempDir, 0o700); err != nil {
+		return fmt.Errorf("creating scratch directory %s: %w", r.opts.TempDir, err)
 	}
 
-	r.tempDir = base
+	dir, err := os.MkdirTemp(r.opts.TempDir, "dr-sync-*")
+	if err != nil {
+		return fmt.Errorf("creating scratch directory in %s: %w", r.opts.TempDir, err)
+	}
+
+	r.tempDir = dir
 
 	return nil
 }

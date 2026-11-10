@@ -379,6 +379,10 @@ func TestDownloadSkipsAManifestPathUnderTheBackupDirectory(t *testing.T) {
 func TestDownloadBackupWithDeleteDoesNotCleanUpThroughANewSymlink(t *testing.T) {
 	t.Parallel()
 
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+
 	h := newHarness(t)
 	remote := writeTree(t, map[string]string{"target/child/x": "keep"})
 	require.NoError(t, os.Symlink("target", filepath.Join(remote, "d")))
@@ -420,6 +424,10 @@ func TestDownloadBackupMovesAFileThatBecomesADirectory(t *testing.T) {
 // A symlink in place of the backup directory would send the moved files wherever it points.
 func TestDownloadBackupRefusesASymlinkedBackupDirectory(t *testing.T) {
 	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
 
 	h := newHarness(t)
 	h.upload(t, writeTree(t, map[string]string{"a.txt": "remote"}))
@@ -473,4 +481,43 @@ func TestDownloadSkipsADifferentlyCasedBackupDirectoryPath(t *testing.T) {
 	require.Len(t, result.Plan.Skipped, 1)
 	assert.Equal(t, ".DR-SYNC-BACKUP/x.txt", result.Plan.Skipped[0].Path)
 	assert.Equal(t, map[string]string{"ok.txt": ""}, readTree(t, local))
+}
+
+// A scratch directory that overlaps the backup directory must not take the saved edits with it
+// when the pull cleans up.
+func TestDownloadBackupSurvivesScratchInsideTheBackupDirectory(t *testing.T) {
+	t.Parallel()
+
+	h, bob := bobEdits(t)
+
+	older := filepath.Join(bob, scan.BackupDirName, "20200101T000000Z")
+	require.NoError(t, os.MkdirAll(older, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(older, "old.txt"), []byte("from an earlier pull"), 0o600))
+
+	result := h.download(t, bob, func(o *syncer.DownloadOptions) {
+		o.Backup = true
+		o.TempDir = filepath.Join(bob, scan.BackupDirName)
+	})
+
+	kept, err := os.ReadFile(filepath.Join(result.BackupDir, "a.txt"))
+	require.NoError(t, err, "the backup of this pull must survive the cleanup")
+	assert.Equal(t, "bob's local edit, longer than v1", string(kept))
+
+	_, err = os.Stat(filepath.Join(older, "old.txt"))
+	assert.NoError(t, err, "a backup from an earlier pull must survive the cleanup")
+}
+
+func TestDownloadLeavesUnrelatedFilesInACustomScratchDirectory(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.upload(t, writeTree(t, map[string]string{"a.txt": "remote"}))
+
+	scratch := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(scratch, "mine.txt"), []byte("not ours"), 0o600))
+
+	h.download(t, t.TempDir(), func(o *syncer.DownloadOptions) { o.TempDir = scratch })
+
+	_, err := os.Stat(filepath.Join(scratch, "mine.txt"))
+	assert.NoError(t, err, "cleanup must remove only what the pull created")
 }
