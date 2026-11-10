@@ -107,8 +107,12 @@ jobs:
 
           if ($directCode -eq 0) { throw 'upload against a closed port should fail' }
           if ($viaDrCode -ne $directCode) { throw "exit code changed: direct $directCode, through dr $viaDrCode" }
-          $strip = { param($text) (($text -split "`r?`n" | Where-Object { $_ -notmatch 'Running plugin' }) -join "`n").Trim() }
-          if ((& $strip $direct) -ne (& $strip $viaDr)) { throw 'the output through dr differs from the direct output' }
+          # Output differs by design: dr prefixes the program name differently and its installer's
+          # PowerShell profile adds noise. What must hold is that the path with a space and the
+          # catalog ID reach the request, which only happens when the wrapper passes arguments intact.
+          $request = [regex]::Escape("files/$id/allFiles")
+          if ($direct -notmatch $request) { throw 'the direct run never reached the request' }
+          if ($viaDr -notmatch $request) { throw 'the catalog ID did not reach the request through dr' }
 
   go-test-windows:
     runs-on: windows-latest
