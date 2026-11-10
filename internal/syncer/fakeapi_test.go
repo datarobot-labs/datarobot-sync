@@ -61,6 +61,9 @@ type fakeAPI struct {
 	// afterCommit runs once a commit has been applied and before the response is sent, so a
 	// test can make the server answer late and the client give up on a commit that landed.
 	afterCommit func(names []string)
+	// loseResponse runs after a commit has been applied. When it returns true the server answers
+	// 503, so the client retries a stage that no longer exists.
+	loseResponse func(names []string) bool
 }
 
 type fakeContainer struct {
@@ -402,6 +405,12 @@ func (a *fakeAPI) commitStage(t *testing.T, w http.ResponseWriter, r *http.Reque
 
 	if a.afterCommit != nil {
 		a.afterCommit(names)
+	}
+
+	if a.loseResponse != nil && a.loseResponse(names) {
+		writeJSON(t, w, http.StatusServiceUnavailable, map[string]string{"message": "answer lost"})
+
+		return
 	}
 
 	writeJSON(t, w, http.StatusOK, map[string]any{

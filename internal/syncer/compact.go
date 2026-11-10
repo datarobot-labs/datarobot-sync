@@ -354,7 +354,10 @@ func rewritePacks(ctx context.Context, store *Store, reporter *progress.Reporter
 
 	reporter.Phase("pack", fmt.Sprintf("%d fresh packs, %s", len(fresh), progress.HumanBytes(uploaded)))
 
-	final := []Object{{Name: next.ObjectName(), Content: encoded, Size: int64(len(encoded))}}
+	final := []Object{
+		{Name: next.ObjectName(), Content: encoded, Size: int64(len(encoded))},
+		claimObject(next),
+	}
 
 	err = store.Commit(ctx, objects, final, CommitOptions{
 		Parallel:      opts.UploadJobs,
@@ -363,7 +366,10 @@ func rewritePacks(ctx context.Context, store *Store, reporter *progress.Reporter
 		Overwrite:     drapi.OverwriteError,
 	})
 	if err != nil {
-		return nil, 0, err
+		err = store.resolveCommitError(ctx, err, headRef.ID, next)
+		if err != nil {
+			return nil, 0, err
+		}
 	}
 
 	return next, uploaded, nil

@@ -53,6 +53,8 @@ type CollectPlan struct {
 	Manifests []string
 	Packs     []string
 	Leases    []string
+	// Claims is the head claims below the oldest retained generation.
+	Claims []string
 	// Writers is stale entries from the resident-writer registry. They sit outside the
 	// pack/manifest reference graph, so nothing else will ever reclaim them.
 	Writers []string
@@ -63,16 +65,17 @@ type CollectPlan struct {
 
 // Names returns every object the plan would delete.
 func (p *CollectPlan) Names() []string {
-	names := make([]string, 0, len(p.Manifests)+len(p.Packs)+len(p.Leases)+len(p.Writers))
+	names := make([]string, 0, len(p.Manifests)+len(p.Packs)+len(p.Leases)+len(p.Claims)+len(p.Writers))
 
 	// Manifests first. The ordering invariant is that a pack may only be deleted after the
 	// last manifest referencing it is gone, so a pass that is interrupted halfway leaves
-	// packs without a manifest rather than a manifest without its packs. Leases and writers
-	// are both advisory and unreferenced by anything, so their order relative to the rest
-	// does not matter.
+	// packs without a manifest rather than a manifest without its packs. Leases, claims and
+	// writers are unreferenced by anything, so their order relative to the rest does not
+	// matter.
 	names = append(names, p.Manifests...)
 	names = append(names, p.Packs...)
 	names = append(names, p.Leases...)
+	names = append(names, p.Claims...)
 	names = append(names, p.Writers...)
 
 	return names
@@ -80,14 +83,15 @@ func (p *CollectPlan) Names() []string {
 
 // Empty reports whether there is nothing to do.
 func (p *CollectPlan) Empty() bool {
-	return len(p.Manifests) == 0 && len(p.Packs) == 0 && len(p.Leases) == 0 && len(p.Writers) == 0
+	return len(p.Manifests) == 0 && len(p.Packs) == 0 && len(p.Leases) == 0 &&
+		len(p.Claims) == 0 && len(p.Writers) == 0
 }
 
 // PlanCollect decides what can be removed, given the current listing.
 //
-// Only two things are ever deleted: manifests beyond the retention count, and objects no
-// retained manifest references. Nothing is rewritten, so this pass moves no data and can run
-// after every push.
+// It plans the deletion of manifests beyond the retention count, objects no retained manifest
+// references, and stale leases, claims and writers. Nothing is rewritten, so this pass moves
+// no data and can run after every push.
 func PlanCollect(ctx context.Context, store *Store, state *State, opts CollectOptions) (*CollectPlan, error) {
 	keep := opts.KeepGenerations
 	if keep <= 0 {
@@ -132,12 +136,39 @@ func PlanCollect(ctx context.Context, store *Store, state *State, opts CollectOp
 	collectUnreferencedPacks(plan, store, state, referenced, now, grace)
 
 	plan.Leases = StaleLeaseNames(state.Leases, now)
+	plan.Claims = staleClaimNames(state.Claims, plan.Retained)
 	plan.Writers = StaleWriterNames(state.Writers, now)
 
 	sort.Strings(plan.Manifests)
 	sort.Strings(plan.Packs)
 
 	return plan, nil
+}
+
+// staleClaimNames returns the claims for generations below the oldest retained manifest.
+func staleClaimNames(claims []Claim, retained []manifest.Ref) []string {
+	if len(retained) == 0 {
+		return nil
+	}
+
+	// A writer claims the generation after the head, so a claim below every retained manifest
+	// cannot be contended again.
+	oldest := retained[0].Generation
+	for _, ref := range retained[1:] {
+		oldest = min(oldest, ref.Generation)
+	}
+
+	var names []string
+
+	for _, claim := range claims {
+		if claim.Generation < oldest {
+			names = append(names, claim.ObjectName)
+		}
+	}
+
+	sort.Strings(names)
+
+	return names
 }
 
 // collectUnreferencedPacks adds pack objects no retained manifest points at.

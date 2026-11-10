@@ -47,6 +47,7 @@ const (
 	packsDir     = "packs"
 	locksDir     = "locks"
 	writersDir   = "writers"
+	claimsDir    = "claims"
 	readmeName   = "README.txt"
 )
 

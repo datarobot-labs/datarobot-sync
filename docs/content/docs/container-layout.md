@@ -9,6 +9,7 @@ reserved prefix as immutable objects:
 ```
 .dr-sync/manifests/0000000042-7f3a9c2b.json.xz   the file tree, one per push
 .dr-sync/packs/p_9f2a1c8d3e4f5061.tar.xz         contents, named after their own digest
+.dr-sync/claims/0000000042.claim                 head claim, written with the manifest of that generation
 .dr-sync/locks/<client>-<n>.lock                 advisory claims held during a push
 .dr-sync/writers/<client>-<n>.json               resident `watch` processes announcing themselves
 ```
@@ -29,10 +30,15 @@ path → sha256 → pack. This buys: identical content stored once, renames and 
 that transfer zero bytes, "did this change?" as a map lookup, and no path-traversal
 surface inside the tar.
 
-There is no mutable pointer object, because the API has no compare-and-swap and a
+There is no mutable pointer object, because the API has no conditional write and a
 mutable head is exactly where lost updates become corruption. The head is **derived**:
 list `.dr-sync/manifests/` and take the lexicographic max — manifests are zero-padded
 to 10 digits so lexicographic order equals numeric order.
+
+The compare-and-swap comes from names. A commit that stages a name that already exists is
+rejected whole, so each manifest commit also stages `.dr-sync/claims/<generation>.claim`.
+Two writers that plan the same generation stage the same claim name, and exactly one
+commit lands.
 
 Each pack is named `p_<sha256(blob)[0:16]>`, so a rebuild with the same tar order and
 compression settings is byte-identical and produces the same name — crash-resume is a
