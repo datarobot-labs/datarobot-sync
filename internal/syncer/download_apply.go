@@ -131,7 +131,7 @@ func (r *downloadRun) openSlice(ctx context.Context, name string, links map[stri
 	if !ok || link.Expiring() {
 		var err error
 
-		if link, err = r.refreshLink(ctx, name, links); err != nil {
+		if link, err = r.refreshLink(ctx, name); err != nil {
 			return nil, err
 		}
 	}
@@ -142,7 +142,7 @@ func (r *downloadRun) openSlice(ctx context.Context, name string, links map[stri
 	}
 
 	// The URL lapsed anyway; one refresh and retry, then give up rather than loop.
-	link, err = r.refreshLink(ctx, name, links)
+	link, err = r.refreshLink(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -161,9 +161,10 @@ func (r *downloadRun) openPresigned(ctx context.Context, name, signedURL string)
 	return body, err
 }
 
-// refreshLink fetches a fresh presigned link for name and stores it in links. It returns a
-// StaleManifestError when the API no longer knows the name.
-func (r *downloadRun) refreshLink(ctx context.Context, name string, links map[string]drapi.Link) (drapi.Link, error) {
+// refreshLink fetches a fresh presigned link for name. It leaves the shared links map alone, since
+// pack workers read it at the same time. It returns a StaleManifestError when the API no longer
+// knows the name.
+func (r *downloadRun) refreshLink(ctx context.Context, name string) (drapi.Link, error) {
 	refreshed, err := r.store.SignedLinks(ctx, []string{name})
 	if err != nil {
 		return drapi.Link{}, err
@@ -173,8 +174,6 @@ func (r *downloadRun) refreshLink(ctx context.Context, name string, links map[st
 	if !ok {
 		return drapi.Link{}, &StaleManifestError{ObjectName: name}
 	}
-
-	links[name] = link
 
 	return link, nil
 }

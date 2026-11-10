@@ -16,6 +16,7 @@ package syncer_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -229,4 +230,28 @@ func TestReadObjectViaAPIReportsAVanishedObjectAsStale(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, syncer.IsStaleManifest(err))
+}
+
+// Every pack answers 403 as a lapsed link does, so all eight workers refresh links at once.
+func TestDownloadRefreshesLinksFromConcurrentWorkers(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+
+	files := make(map[string]string, 16)
+	for i := range 16 {
+		files[fmt.Sprintf("f%02d.txt", i)] = strings.Repeat(fmt.Sprintf("content %02d ", i), 200)
+	}
+
+	h.upload(t, writeTree(t, files), func(opts *syncer.UploadOptions) { opts.BigFileThreshold = 1 })
+	h.api.failObjectStoreFor(http.StatusForbidden, ".dr-sync/packs/")
+
+	linksBefore := h.api.linkRequests.Load()
+
+	result, err := syncer.Download(context.Background(), h.store, progress.Discard(),
+		syncer.DownloadOptions{Root: t.TempDir(), Parallel: 8})
+
+	require.NoError(t, err)
+	assert.True(t, result.Partial(), "every pack answers 403, so none is pulled")
+	assert.Greater(t, h.api.linkRequests.Load()-linksBefore, int64(1), "each lapsed link is refreshed")
 }
