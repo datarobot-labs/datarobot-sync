@@ -70,6 +70,10 @@ type UploadOptions struct {
 	// random id every call, a lease left behind by a run that died mid-commit looks foreign to
 	// the very process that orphaned it, and the next run blocks for the full lease TTL.
 	ClientID string
+	// ExpectHead, when set, is the manifest id the local tree was last brought up to date with.
+	// The push is refused if the container's head is any other manifest. Force does not override
+	// it.
+	ExpectHead string
 
 	DryRun bool
 }
@@ -257,6 +261,10 @@ func (r *uploadRun) readRemoteAndScan(ctx context.Context) error {
 
 		if err != nil {
 			return err
+		}
+
+		if r.opts.ExpectHead != "" && ref.ID != r.opts.ExpectHead {
+			return &StaleBaseError{Expected: r.opts.ExpectHead, Actual: ref.ID}
 		}
 
 		r.parent = parent
@@ -688,14 +696,28 @@ func describeGeneration(id string) string {
 	return id
 }
 
-// IsConflict reports whether err is a lost-update or lease conflict.
+// StaleBaseError means the container's head is not the manifest the push was based on, which
+// is what a teammate's push since the last download looks like.
+type StaleBaseError struct {
+	Expected string
+	Actual   string
+}
+
+func (e *StaleBaseError) Error() string {
+	return fmt.Sprintf("this push is based on %s but the container is at %s; "+
+		"another writer pushed in between, so download to bring their changes in, then push again",
+		describeGeneration(e.Expected), describeGeneration(e.Actual))
+}
+
+// IsConflict reports whether err is a lost-update, stale-base or lease conflict.
 func IsConflict(err error) bool {
 	var (
 		conflict *ConflictError
+		stale    *StaleBaseError
 		held     *LeaseHeldError
 	)
 
-	return errors.As(err, &conflict) || errors.As(err, &held)
+	return errors.As(err, &conflict) || errors.As(err, &stale) || errors.As(err, &held)
 }
 
 // collect deletes what the new manifest no longer needs.

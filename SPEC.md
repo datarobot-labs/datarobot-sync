@@ -239,7 +239,8 @@ immediately valid rather than a special case everywhere. Prints the id and the
 2. **Read head** (concurrent with 3). `GET files/{id}/allFiles/?prefix=.dr-sync/&limit=1000`
    with pagination → the objects, their sizes and `fileChecksum`s. Head = lexicographic max
    manifest; fetch via `/links/`, xz-decode. Also `GET catalogItems/{id}/extendedDetails/`
-   for `catalogVersionId`.
+   for `catalogVersionId`. With `--expect-head <id>`, a head other than `<id>` ends the run
+   here with exit 4, before any hashing or upload, and `--force` does not override it.
 3. **Walk + hash** (concurrent with 2). One walker feeding `min(GOMAXPROCS,8)` hashers.
    Under `--check=auto` (default) a hasher first consults the parent manifest: matching
    `size` + `modTime` + `mode` ⇒ adopt the recorded SHA without reading the file. This is
@@ -345,12 +346,23 @@ recognizes by content-addressed name and skips; anything never re-run is reaped 
    Local-reuse sources are first copied into the scratch directory and hashed, before anything
    is replaced, so one placement in a pull cannot change what a later copy reads. A source that
    no longer matches ends the run.
+   With `--backup`, each existing local path the apply is about to replace is first renamed
+   to `<root>/.dr-sync-backup/<UTC stamp>/<relative path>`, so a local edit that a teammate's
+   newer push overrides stays recoverable. A file the pull leaves alone is not copied. A directory
+   replaced by a file moves aside whole, and a directory that already holds part of its content
+   in the backup is merged.
    **Strip setuid/setgid/sticky** unless `--preserve-special-modes` — materializing a setuid
    binary out of a remote blob is a security hole. Reject any manifest path that is
    absolute, contains `..` or NUL, starts with the meta prefix, or case-collides on a
    case-insensitive filesystem (probed once; collisions warn-and-skip).
 7. Extraneous local files are listed and kept; `--delete` removes them, `--delete-excluded`
-   also prunes emptied dirs. Never touch anything outside root or under the meta prefix.
+   also prunes emptied dirs. With `--backup`, `--delete` moves them into the backup directory
+   instead of unlinking them. Never touch anything outside root or under the meta prefix.
+   `.dr-sync-backup/` is reserved like `.dr-sync-tmp/`: scans, `watch` and the download plan
+   skip it, so a backup never reaches the container and a manifest path under it is skipped with a warning.
+   The names are compared without case, since a filesystem that ignores case treats a different
+   spelling as the same directory. A `.dr-sync-backup` that is a symlink or a file stops the
+   pull, because the moves would leave the sync root.
 8. A pack that fails after `--retries` marks its blobs failed and the rest continue: what
    landed is SHA-verified and atomically renamed, what didn't is untouched. Exit 6 with the
    list. Re-running picks up exactly the remainder, because local truth is re-derived every
@@ -465,6 +477,13 @@ when a fork is seen).
 - *Lost answer.* A manifest commit can land while its answer is lost. After any failed
   commit the run re-reads the container, and when the head is its own manifest it reports
   success instead of the retry's error.
+- *Stale tree.* The claim stops two writers that plan one generation. It does not stop a
+  tree that is older than the head: its stale file differs from the head's entry, so the
+  next push records it as a local change and a teammate's newer version is overwritten in
+  the new manifest. Nothing in the container knows what the tree was based on, because there
+  is no local state (invariant 7). A caller that does know passes `--expect-head <id>`, the
+  manifest id the last `download` printed, and the push ends with exit 4 when the head has
+  moved. `--backup` on the pull covers the other half: the local edit survives the merge.
 - *Read during compact.* A reader holding manifest N whose packs get deleted gets a missing
   name from `/links/` → exit 5, "re-run". Bounded by the grace window, not eliminated.
 - *Multi-stage commit.* Packs land in earlier catalog versions than the manifest; between
@@ -567,21 +586,24 @@ Upload adds `--delete`, `--level 0|1|3|6|9` (6), `--pack-size`, `--pack-input-ma
 `--big-file-threshold`, `--slice-size`, `--max-stage-bytes`, `--max-stage-files`,
 `--compress-jobs`, `--upload-jobs`, `--tmpdir`, `--max-scratch`, `--keep-generations`,
 `--gc-grace`, `--no-gc`, `--auto-compact`, `--compact-threshold`, `--no-lock`, `--force`,
-`--follow-symlinks`, `--overwrite error|replace`.
+`--expect-head <manifest id>` (`upload` and `status` only), `--follow-symlinks`,
+`--overwrite error|replace`.
 
-Download adds `--delete`, `--delete-excluded`, `--prefix` (repeatable),
+Download adds `--delete`, `--delete-excluded`, `--backup`, `--prefix` (repeatable),
 `--generation`/`--manifest` (pull a retained older generation), `--parallel`,
 `--link-duration`, `--no-local-reuse`, `--preserve-special-modes`, `--allow-unsafe-links`,
 `--tmpdir` (must share the filesystem with root).
 
 Watch shares every upload flag — including `--timeout`, which bounds one cycle, not the
 daemon — but registers `--delete` with a default of `true` rather than `upload`'s `false`.
+The one exception is `--expect-head`: watch rejects it, because it pushes every cycle and one
+expected head fits only the first.
 It adds `--debounce` (2s), `--min-interval` (15s), `--poll-interval` (60s; `0` disables it),
 `--poll-only` (skip the OS watcher entirely), `--gc-interval` (10m; `0` disables it), and
 `--writer-ttl` (5m, how long its writers-registry entry is honoured).
 
 **Exit codes:** 0 success (including nothing to do) · 1 internal · 2 usage/config/precondition
-· 3 API or auth failure · 4 conflict (foreign lease, generation moved, fork) · 5 integrity
+· 3 API or auth failure · 4 conflict (foreign lease, generation moved, `--expect-head` mismatch, fork) · 5 integrity
 (SHA mismatch, missing pack, unsupported `formatVersion`) · 6 partial success · 130
 interrupted (lease released, scratch cleaned).
 

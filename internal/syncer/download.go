@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -49,6 +50,9 @@ type DownloadOptions struct {
 
 	Delete         bool
 	DeleteExcluded bool
+	// Backup moves local files the pull replaces or removes into a per-run directory under
+	// scan.BackupDirName.
+	Backup bool
 	// NoLocalReuse disables satisfying a needed file by copying an identical local sibling.
 	NoLocalReuse bool
 	// PreserveSpecialModes keeps setuid, setgid and sticky bits.
@@ -74,7 +78,10 @@ type DownloadResult struct {
 	// BytesTransferred is the compressed volume actually fetched.
 	BytesTransferred int64
 	Removed          int
-	DryRun           bool
+	// BackedUp counts local paths kept under BackupDir before they were replaced or removed.
+	BackedUp  int
+	BackupDir string
+	DryRun    bool
 }
 
 // Partial reports whether some files failed while others succeeded.
@@ -133,7 +140,12 @@ func (p *DownloadPlan) Empty() bool {
 
 // Download makes the local tree match the container.
 func Download(ctx context.Context, store *Store, reporter *progress.Reporter, opts DownloadOptions) (*DownloadResult, error) {
-	run := &downloadRun{store: store, reporter: reporter, opts: opts}
+	run := &downloadRun{
+		store:      store,
+		reporter:   reporter,
+		opts:       opts,
+		backupRoot: filepath.Join(opts.Root, scan.BackupDirName, time.Now().UTC().Format("20060102T150405.000000Z")),
+	}
 
 	return run.execute(ctx)
 }
@@ -147,6 +159,10 @@ type downloadRun struct {
 	manifest *manifest.Manifest
 	local    *scan.Result
 	tempDir  string
+
+	// backupRoot is this run's directory for kept local files, and backedUp counts them.
+	backupRoot string
+	backedUp   int
 }
 
 func (r *downloadRun) execute(ctx context.Context) (*DownloadResult, error) {
@@ -205,7 +221,22 @@ func (r *downloadRun) execute(ctx context.Context) (*DownloadResult, error) {
 
 	result.Removed = removed
 
+	r.recordBackup(result)
+
 	return result, nil
+}
+
+// recordBackup copies the backup tally into the result and says where the kept files went.
+func (r *downloadRun) recordBackup(result *DownloadResult) {
+	result.BackedUp = r.backedUp
+
+	if r.backedUp == 0 {
+		return
+	}
+
+	result.BackupDir = r.backupRoot
+
+	r.reporter.Phase("backup", fmt.Sprintf("%s local paths kept in %s", progress.Count(r.backedUp), r.backupRoot))
 }
 
 // readRemote loads the manifest this pull will reproduce.
@@ -331,15 +362,28 @@ func (r *downloadRun) prepareTempDir() error {
 	// os.Rename, which is only atomic within one filesystem.
 	base := filepath.Join(r.opts.Root, scan.TempDirName)
 
-	if r.opts.TempDir != "" {
-		base = r.opts.TempDir
+	if r.opts.TempDir == "" {
+		if err := os.MkdirAll(base, 0o700); err != nil {
+			return fmt.Errorf("creating scratch directory %s: %w", base, err)
+		}
+
+		r.tempDir = base
+
+		return nil
 	}
 
-	if err := os.MkdirAll(base, 0o700); err != nil {
-		return fmt.Errorf("creating scratch directory %s: %w", base, err)
+	// A caller-chosen directory may hold other files, or the backups, so the run works in a
+	// private subdirectory and removes only that.
+	if err := os.MkdirAll(r.opts.TempDir, 0o700); err != nil {
+		return fmt.Errorf("creating scratch directory %s: %w", r.opts.TempDir, err)
 	}
 
-	r.tempDir = base
+	dir, err := os.MkdirTemp(r.opts.TempDir, "dr-sync-*")
+	if err != nil {
+		return fmt.Errorf("creating scratch directory in %s: %w", r.opts.TempDir, err)
+	}
+
+	r.tempDir = dir
 
 	return nil
 }
@@ -417,11 +461,47 @@ func (r *downloadRun) removeExtraneous(plan *DownloadPlan) (int, error) {
 	return removed, nil
 }
 
+// keepInsteadOfRemoving moves a file or symlink into the backup directory when --backup is set,
+// and reports whether it did. A missing path is left to the caller. So is a directory, because
+// moving one that still holds excluded files would take them too.
+func (r *downloadRun) keepInsteadOfRemoving(full string) (bool, error) {
+	if !r.opts.Backup {
+		return false, nil
+	}
+
+	if info, err := os.Lstat(full); err == nil && !info.IsDir() {
+		return true, r.backup(full)
+	}
+
+	return false, nil
+}
+
+// underNonDirectory reports whether a parent of full inside the sync root is now a file or a
+// symlink. The pull can put one there after the plan listed full as extraneous, and acting on
+// full would then reach whatever the new entry points at.
+func (r *downloadRun) underNonDirectory(full string) bool {
+	for dir := filepath.Dir(full); dir != r.opts.Root && strings.HasPrefix(dir, r.opts.Root); dir = filepath.Dir(dir) {
+		if info, err := os.Lstat(dir); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+
+	return false
+}
+
 // removeOne deletes one extraneous path, reporting whether anything went away.
 func (r *downloadRun) removeOne(relPath string) (bool, error) {
 	full, err := scan.LocalPath(r.opts.Root, relPath)
 	if err != nil {
 		return false, err
+	}
+
+	if r.underNonDirectory(full) {
+		return false, nil
+	}
+
+	if kept, err := r.keepInsteadOfRemoving(full); kept || err != nil {
+		return kept, err
 	}
 
 	err = os.Remove(full)
@@ -430,25 +510,40 @@ func (r *downloadRun) removeOne(relPath string) (bool, error) {
 	case err == nil:
 		return true, nil
 
-	case errors.Is(err, os.ErrNotExist):
+	case isGone(err):
 		return false, nil
 
 	case isNotEmpty(err):
-		// A directory still holding excluded files is left alone; only --delete-excluded is
-		// licence to take those too.
-		if !r.opts.DeleteExcluded {
-			return false, nil
-		}
-
-		if err := os.RemoveAll(full); err != nil {
-			return false, fmt.Errorf("removing %s: %w", full, err)
-		}
-
-		return true, nil
+		return r.removeNonEmpty(full)
 
 	default:
 		return false, fmt.Errorf("removing %s: %w", full, err)
 	}
+}
+
+// removeNonEmpty removes a directory that still holds excluded files, or moves it to the backup
+// directory with --backup, and reports whether it did. It does nothing unless --delete-excluded
+// is set.
+func (r *downloadRun) removeNonEmpty(full string) (bool, error) {
+	if !r.opts.DeleteExcluded {
+		return false, nil
+	}
+
+	if r.opts.Backup {
+		return true, r.backup(full)
+	}
+
+	if err := os.RemoveAll(full); err != nil {
+		return false, fmt.Errorf("removing %s: %w", full, err)
+	}
+
+	return true, nil
+}
+
+// isGone reports whether a removal found nothing to remove: the path is missing, or a parent of
+// it was replaced by a file earlier in the same pull.
+func isGone(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 }
 
 // isNotEmpty reports whether a removal failed because the directory still has contents.
