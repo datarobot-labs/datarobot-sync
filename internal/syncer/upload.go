@@ -590,7 +590,10 @@ func (r *uploadRun) commit(ctx context.Context, plan *UploadPlan, built []*packe
 		},
 	})
 	if err != nil {
-		return nil, r.store.conflictFromCommit(ctx, err, r.parentRef.ID, next.Generation)
+		err = r.store.resolveCommitError(ctx, err, r.parentRef.ID, next)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return next, nil

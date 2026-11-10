@@ -42,23 +42,33 @@ func claimObject(next *manifest.Manifest) Object {
 	}
 }
 
-// conflictFromCommit returns a ConflictError when commitErr is a 409 and the head moved or the
-// generation is already claimed. Any other error, including a failed re-read, is returned
-// unchanged.
-func (s *Store) conflictFromCommit(ctx context.Context, commitErr error, expectedHeadID string, generation int64) error {
-	if !drapi.IsConflict(commitErr) {
-		return commitErr
-	}
-
+// resolveCommitError judges a failed commit by what the container holds afterwards. It returns:
+//   - nil when next is the head: the commit landed and only its answer was lost, which the client
+//     sees as a failed retry of a stage that no longer exists.
+//   - a ConflictError when commitErr is a 409 and the head moved or the generation is claimed.
+//   - commitErr unchanged for anything else, including a failed re-read.
+func (s *Store) resolveCommitError(ctx context.Context, commitErr error, expectedHeadID string, next *manifest.Manifest) error {
 	state, err := s.ReadState(ctx)
 	if err != nil {
 		return commitErr
 	}
 
-	head, _ := manifest.SelectHead(state.Manifests)
+	head, ok := manifest.SelectHead(state.Manifests)
+	if !ok {
+		return commitErr
+	}
+
+	if head.ID == next.ID {
+		return nil
+	}
+
+	if !drapi.IsConflict(commitErr) {
+		return commitErr
+	}
+
 	moved := head.ID != expectedHeadID
 	claimed := slices.ContainsFunc(state.Claims, func(claim Claim) bool {
-		return claim.Generation == generation
+		return claim.Generation == next.Generation
 	})
 
 	// A 409 can also mean a pack name another writer uploaded first, which is not a lost update.

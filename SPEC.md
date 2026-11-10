@@ -90,6 +90,9 @@ Also established:
   for large stages, not the main path, and the async design must not assume it fires.
 - **`fromStage` is atomic.** On the `409` above, none of the stage's files landed, including
   the ones with no conflict. Partial application is not a case to handle.
+- **A spent stage cannot be applied again.** The second `fromStage` for one stage answers
+  `422 ... The stage can't be applied twice`, never `409` (verified 2026-11-10). A commit
+  whose answer is lost therefore fails on retry with a `422`, even though it landed.
 - Per-file upload round-trips cost ~0.2 s each at 8-way parallelism (200 files in 43 s). This
   is the whole case for packing: 200 files in one pack is one request, not 200.
 - `allFiles/` `limit` **caps at 1000** (higher → `value is greater than 1000`); the default is
@@ -451,6 +454,9 @@ when a fork is seen).
   reaps them and a re-run reuses them. Still open against a writer from before claims
   existed, which can fork the head with any writer. Post-commit fork detection covers that
   case, and the heal is the same re-run: it re-classifies against the new head.
+- *Lost answer.* A manifest commit can land while its answer is lost. After any failed
+  commit the run re-reads the container, and when the head is its own manifest it reports
+  success instead of the retry's error.
 - *Read during compact.* A reader holding manifest N whose packs get deleted gets a missing
   name from `/links/` → exit 5, "re-run". Bounded by the grace window, not eliminated.
 - *Multi-stage commit.* Packs land in earlier catalog versions than the manifest; between

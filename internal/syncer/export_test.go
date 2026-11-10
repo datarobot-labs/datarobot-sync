@@ -14,8 +14,12 @@
 
 package syncer
 
-import "context"
+import (
+	"context"
 
-func ConflictFromCommit(ctx context.Context, store *Store, commitErr error, expectedHeadID string, generation int64) error {
-	return store.conflictFromCommit(ctx, commitErr, expectedHeadID, generation)
+	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
+)
+
+func ResolveCommitError(ctx context.Context, store *Store, commitErr error, expectedHeadID string, next *manifest.Manifest) error {
+	return store.resolveCommitError(ctx, commitErr, expectedHeadID, next)
 }

@@ -18,7 +18,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -157,6 +159,37 @@ func TestCompactRefusesAGenerationAnotherWriterClaimed(t *testing.T) {
 	assert.Equal(t, manifestsBefore, h.api.countObjects(h.containerID, ".dr-sync/manifests/"))
 }
 
+// The server can apply a commit and lose the answer. The client retries a stage that no longer
+// exists and fails, but the head is the run's own manifest, so the push landed.
+func TestUploadSucceedsWhenTheCommitLandedAndTheAnswerWasLost(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	source := writeTree(t, map[string]string{"a.txt": "one"})
+	h.upload(t, source, func(o *syncer.UploadOptions) { o.NoGC = true })
+
+	writeInto(t, source, map[string]string{"a.txt": "two"})
+
+	var lost atomic.Bool
+
+	h.api.loseResponse = func(names []string) bool {
+		carriesManifest := slices.ContainsFunc(names, func(name string) bool {
+			return strings.HasPrefix(name, ".dr-sync/manifests/")
+		})
+
+		return carriesManifest && lost.CompareAndSwap(false, true)
+	}
+
+	result := h.upload(t, source, func(o *syncer.UploadOptions) { o.NoGC = true })
+
+	assert.True(t, lost.Load(), "the manifest commit must have lost its answer")
+	assert.EqualValues(t, 2, result.Manifest.Generation)
+
+	destination := t.TempDir()
+	h.download(t, destination)
+	assert.Equal(t, map[string]string{"a.txt": "two"}, readTree(t, destination))
+}
+
 func TestUploadSucceedsOnAContainerWrittenWithoutClaims(t *testing.T) {
 	t.Parallel()
 
@@ -235,7 +268,7 @@ func TestCollectKeepsEveryClaimWhenNothingIsPruned(t *testing.T) {
 	assert.Empty(t, plan.Claims)
 }
 
-func TestConflictFromCommit(t *testing.T) {
+func TestResolveCommitError(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
@@ -249,20 +282,21 @@ func TestConflictFromCommit(t *testing.T) {
 	require.True(t, ok)
 
 	rejected := &drapi.APIError{Method: http.MethodPost, Path: "files/x/fromStage/", Status: http.StatusConflict}
+	rival := &manifest.Manifest{ID: "0000000002-deadbeef", Generation: 2}
 
 	t.Run("a non-conflict error passes through", func(t *testing.T) {
 		t.Parallel()
 
 		boom := errors.New("boom")
 
-		assert.Same(t, boom, syncer.ConflictFromCommit(context.Background(), h.store, boom, head.ID, 2))
+		assert.Same(t, boom, syncer.ResolveCommitError(context.Background(), h.store, boom, head.ID, rival))
 	})
 
 	t.Run("a 409 with the head unmoved and no claim is not a lost update", func(t *testing.T) {
 		t.Parallel()
 
 		// This is what a pack name that a concurrent writer uploaded first looks like.
-		err := syncer.ConflictFromCommit(context.Background(), h.store, rejected, head.ID, 2)
+		err := syncer.ResolveCommitError(context.Background(), h.store, rejected, head.ID, rival)
 
 		assert.Same(t, rejected, err)
 		assert.False(t, syncer.IsConflict(err))
@@ -271,16 +305,48 @@ func TestConflictFromCommit(t *testing.T) {
 	t.Run("a 409 after the head moved is a conflict", func(t *testing.T) {
 		t.Parallel()
 
-		err := syncer.ConflictFromCommit(context.Background(), h.store, rejected, "0000000000-00000000", 1)
+		err := syncer.ResolveCommitError(context.Background(), h.store, rejected, "0000000000-00000000",
+			&manifest.Manifest{ID: "0000000001-deadbeef", Generation: 1})
 
 		var conflict *syncer.ConflictError
 
 		require.ErrorAs(t, err, &conflict)
 		assert.Equal(t, head.ID, conflict.Actual)
 	})
+
+	t.Run("a head that is the next manifest means the commit landed", func(t *testing.T) {
+		t.Parallel()
+
+		landed := &manifest.Manifest{ID: head.ID, Generation: head.Generation}
+		replayed := &drapi.APIError{Method: http.MethodPost, Path: "files/x/fromStage/", Status: http.StatusUnprocessableEntity}
+
+		for _, commitErr := range []error{rejected, replayed, errors.New("boom")} {
+			assert.NoError(t, syncer.ResolveCommitError(context.Background(), h.store, commitErr, "0000000000-00000000", landed),
+				"%v", commitErr)
+		}
+	})
+
+	t.Run("a container with no manifests passes the error through", func(t *testing.T) {
+		t.Parallel()
+
+		empty := newHarness(t)
+
+		var manifests []string
+
+		for _, name := range empty.api.objectNames(empty.containerID) {
+			if strings.HasPrefix(name, ".dr-sync/manifests/") {
+				manifests = append(manifests, name)
+			}
+		}
+
+		_, err := empty.store.Delete(context.Background(), manifests)
+		require.NoError(t, err)
+
+		assert.Same(t, rejected, syncer.ResolveCommitError(context.Background(), empty.store, rejected, head.ID, rival))
+	})
 }
 
-func TestConflictFromCommitSeesAnExistingClaim(t *testing.T) {
+func TestResolveCommitErrorSeesAnExistingClaim(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
@@ -295,7 +361,8 @@ func TestConflictFromCommitSeesAnExistingClaim(t *testing.T) {
 	claimGeneration(t, h, 2)
 
 	rejected := &drapi.APIError{Method: http.MethodPost, Path: "files/x/fromStage/", Status: http.StatusConflict}
-	err = syncer.ConflictFromCommit(context.Background(), h.store, rejected, head.ID, 2)
+	err = syncer.ResolveCommitError(context.Background(), h.store, rejected, head.ID,
+		&manifest.Manifest{ID: "0000000002-deadbeef", Generation: 2})
 
 	var conflict *syncer.ConflictError
 

@@ -366,7 +366,10 @@ func rewritePacks(ctx context.Context, store *Store, reporter *progress.Reporter
 		Overwrite:     drapi.OverwriteError,
 	})
 	if err != nil {
-		return nil, 0, store.conflictFromCommit(ctx, err, headRef.ID, next.Generation)
+		err = store.resolveCommitError(ctx, err, headRef.ID, next)
+		if err != nil {
+			return nil, 0, err
+		}
 	}
 
 	return next, uploaded, nil
