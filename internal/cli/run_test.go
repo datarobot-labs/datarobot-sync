@@ -204,6 +204,7 @@ func TestFinishRunPicksTheExitStatus(t *testing.T) {
 		"interrupted and failed":       {interrupted, &syncer.RunResult{CommandErr: failure}, nil, CodeInterrupted},
 		"interrupted but exited clean": {interrupted, &syncer.RunResult{}, nil, CodeInterrupted},
 		"push refused":                 {context.Background(), &syncer.RunResult{CommandErr: failure}, &syncer.StaleBaseError{}, CodeConflict},
+		"interrupted and push refused": {interrupted, &syncer.RunResult{CommandErr: failure}, &syncer.StaleBaseError{}, CodeInterrupted},
 		"pull failed before the run":   {context.Background(), nil, errors.New("boom"), CodeInternal},
 	}
 
@@ -215,6 +216,23 @@ func TestFinishRunPicksTheExitStatus(t *testing.T) {
 
 		assert.Equal(t, tc.want, got, name)
 	}
+}
+
+func TestFinishRunKeepsThePushErrorWhenAnInterruptSetsTheStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	cancel()
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(ctx)
+
+	refused := fmt.Errorf("the command's changes were not pushed and remain in ./state: %w", &syncer.StaleBaseError{})
+
+	err := finishRun(cmd, progress.Discard(), &syncer.RunResult{}, refused)
+
+	require.ErrorIs(t, err, refused, "the user must still learn that the changes remain local")
 }
 
 // The first interrupt of a run is spent on the command. Only the second one is for the push.

@@ -156,13 +156,22 @@ func runRun(cmd *cobra.Command, args []string, global *globalFlags, opts *upload
 
 // finishRun turns what Run returned into the exit status. A sync failure wins over a command
 // failure, which is then only mentioned, because the sync failure says whether the state is safe.
+// An interrupt wins over both.
 func finishRun(cmd *cobra.Command, reporter *progress.Reporter, result *syncer.RunResult, err error) error {
 	if err != nil {
 		if result != nil && result.CommandErr != nil {
 			reporter.Warn(fmt.Sprintf("the command also failed: %v", result.CommandErr))
 		}
 
-		return classify(err)
+		classified := classify(err)
+
+		// Any interrupt exits 130, whatever the push then did. The error stays, so the user still
+		// learns that the changes remain local.
+		if cmd.Context().Err() != nil && CodeFor(classified) != CodeInterrupted {
+			return Fail(CodeInterrupted, err)
+		}
+
+		return classified
 	}
 
 	if result.Uploaded != nil {
