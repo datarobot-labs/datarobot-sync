@@ -55,6 +55,11 @@ jobs:
     defaults:
       run:
         shell: pwsh
+    # The plugin declares authentication, so dr starts its login setup without a configured URL.
+    # Nothing here talks to an install.
+    env:
+      DATAROBOT_ENDPOINT: http://127.0.0.1:9/api/v2
+      DATAROBOT_API_TOKEN: unused
     steps:
       - name: Download the archive
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -81,15 +86,13 @@ jobs:
 
       - name: Help goes through the PowerShell wrapper
         run: |
-          $out = dr sync --help | Out-String
+          $out = dr --skip-auth --skip-plugin-update-check --disable-telemetry sync --help | Out-String
           Write-Host $out
           if ($LASTEXITCODE -ne 0) { throw "dr sync --help exited $LASTEXITCODE" }
           if ($out -notmatch 'upload') { throw 'the help text does not list upload' }
 
       - name: Exit code and arguments pass through the wrapper
         run: |
-          $env:DATAROBOT_ENDPOINT = 'http://127.0.0.1:9/api/v2'
-          $env:DATAROBOT_API_TOKEN = 'unused'
           $exe = Get-ChildItem -Path $env:APPDATA, $env:LOCALAPPDATA, $HOME -Recurse -Filter 'dr-sync-windows-amd64.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $exe) { throw 'the installed plugin has no dr-sync-windows-amd64.exe' }
           $dir = Join-Path $env:RUNNER_TEMP 'dir with space'
