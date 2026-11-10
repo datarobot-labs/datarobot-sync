@@ -372,3 +372,105 @@ func TestDownloadSkipsAManifestPathUnderTheBackupDirectory(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(local, ".dr-sync-backup"))
 	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
+
+// The pull moves local directory d aside and puts a symlink to target in its place, so d's old
+// children are extraneous. Cleaning them up must not follow the new symlink into target, which
+// the manifest owns.
+func TestDownloadBackupWithDeleteDoesNotCleanUpThroughANewSymlink(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	remote := writeTree(t, map[string]string{"target/child/x": "keep"})
+	require.NoError(t, os.Symlink("target", filepath.Join(remote, "d")))
+	h.upload(t, remote)
+
+	local := writeTree(t, map[string]string{"d/child/x": "old"})
+	result := h.download(t, local, func(o *syncer.DownloadOptions) {
+		o.Backup = true
+		o.Delete = true
+	})
+
+	kept, err := os.ReadFile(filepath.Join(local, "target", "child", "x"))
+	require.NoError(t, err)
+	assert.Equal(t, "keep", string(kept))
+
+	old, err := os.ReadFile(filepath.Join(result.BackupDir, "d", "child", "x"))
+	require.NoError(t, err)
+	assert.Equal(t, "old", string(old))
+}
+
+// A local file where the manifest has a directory: the pull moves the file aside and creates the
+// directory.
+func TestDownloadBackupMovesAFileThatBecomesADirectory(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.upload(t, writeTree(t, map[string]string{"d/x": "new child"}))
+
+	local := writeTree(t, map[string]string{"d": "old file"})
+	result := h.download(t, local, func(o *syncer.DownloadOptions) { o.Backup = true })
+
+	assert.Equal(t, map[string]string{"d/x": "new child"}, readTree(t, local))
+
+	kept, err := os.ReadFile(filepath.Join(result.BackupDir, "d"))
+	require.NoError(t, err)
+	assert.Equal(t, "old file", string(kept))
+}
+
+// A symlink in place of the backup directory would send the moved files wherever it points.
+func TestDownloadBackupRefusesASymlinkedBackupDirectory(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.upload(t, writeTree(t, map[string]string{"a.txt": "remote"}))
+
+	local := writeTree(t, map[string]string{"a.txt": "local edit"})
+	outside := t.TempDir()
+	require.NoError(t, os.Symlink(outside, filepath.Join(local, scan.BackupDirName)))
+
+	_, err := syncer.Download(context.Background(), h.store, progress.Discard(),
+		syncer.DownloadOptions{Root: local, Backup: true})
+	require.Error(t, err)
+
+	moved, readErr := os.ReadDir(outside)
+	require.NoError(t, readErr)
+	assert.Empty(t, moved, "nothing may be moved outside the sync root")
+
+	kept, readErr := os.ReadFile(filepath.Join(local, "a.txt"))
+	require.NoError(t, readErr)
+	assert.Equal(t, "local edit", string(kept))
+}
+
+// On a filesystem that ignores case, .DR-SYNC-BACKUP resolves into .dr-sync-backup, so a manifest
+// path under that spelling would write into saved local edits.
+func TestDownloadSkipsADifferentlyCasedBackupDirectoryPath(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+
+	next := manifest.New(manifest.DefaultMetaPrefix)
+	next.Generation = 1
+	next.Entries = []manifest.Entry{
+		{Path: ".DR-SYNC-BACKUP/x.txt", Type: manifest.TypeFile},
+		{Path: "ok.txt", Type: manifest.TypeFile},
+	}
+
+	require.NoError(t, next.Stamp("hand-built", time.Now()))
+
+	encoded, err := manifest.Encode(next)
+	require.NoError(t, err)
+
+	claim := []byte(next.ID)
+
+	require.NoError(t, h.store.Commit(context.Background(), nil, []syncer.Object{
+		{Name: next.ObjectName(), Content: encoded, Size: int64(len(encoded))},
+		{Name: manifest.ClaimName(manifest.DefaultMetaPrefix, 1), Content: claim, Size: int64(len(claim))},
+	}, syncer.CommitOptions{}))
+
+	local := t.TempDir()
+	result := h.download(t, local)
+
+	require.Len(t, result.Plan.Skipped, 1)
+	assert.Equal(t, ".DR-SYNC-BACKUP/x.txt", result.Plan.Skipped[0].Path)
+	assert.Equal(t, map[string]string{"ok.txt": ""}, readTree(t, local))
+}

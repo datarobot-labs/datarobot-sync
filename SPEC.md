@@ -360,6 +360,9 @@ recognizes by content-addressed name and skips; anything never re-run is reaped 
    instead of unlinking them. Never touch anything outside root or under the meta prefix.
    `.dr-sync-backup/` is reserved like `.dr-sync-tmp/`: scans, `watch` and the download plan
    skip it, so a backup never reaches the container and a manifest path under it is skipped with a warning.
+   The names are compared without case, since a filesystem that ignores case treats a different
+   spelling as the same directory. A `.dr-sync-backup` that is a symlink or a file stops the
+   pull, because the moves would leave the sync root.
 8. A pack that fails after `--retries` marks its blobs failed and the rest continue: what
    landed is SHA-verified and atomically renamed, what didn't is untouched. Exit 6 with the
    list. Re-running picks up exactly the remainder, because local truth is re-derived every

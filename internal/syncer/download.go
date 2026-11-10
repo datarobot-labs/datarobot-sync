@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -462,11 +463,28 @@ func (r *downloadRun) keepInsteadOfRemoving(full string) (bool, error) {
 	return false, nil
 }
 
+// underNonDirectory reports whether a parent of full inside the sync root is now a file or a
+// symlink. The pull can put one there after the plan listed full as extraneous, and acting on
+// full would then reach whatever the new entry points at.
+func (r *downloadRun) underNonDirectory(full string) bool {
+	for dir := filepath.Dir(full); dir != r.opts.Root && strings.HasPrefix(dir, r.opts.Root); dir = filepath.Dir(dir) {
+		if info, err := os.Lstat(dir); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+
+	return false
+}
+
 // removeOne deletes one extraneous path, reporting whether anything went away.
 func (r *downloadRun) removeOne(relPath string) (bool, error) {
 	full, err := scan.LocalPath(r.opts.Root, relPath)
 	if err != nil {
 		return false, err
+	}
+
+	if r.underNonDirectory(full) {
+		return false, nil
 	}
 
 	if kept, err := r.keepInsteadOfRemoving(full); kept || err != nil {

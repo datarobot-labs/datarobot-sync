@@ -294,6 +294,12 @@ func (r *downloadRun) applyDirs(plan *DownloadPlan) error {
 			return err
 		}
 
+		// A local file or symlink where the manifest wants a directory is kept first, and a
+		// directory stays where it is.
+		if _, err := r.keepInsteadOfRemoving(full); err != nil {
+			return err
+		}
+
 		// Created writable regardless of the recorded mode, because content still has to go
 		// inside; the real mode is set afterwards.
 		if err := os.MkdirAll(full, 0o700|r.mode(entry)); err != nil {
@@ -532,6 +538,10 @@ func (r *downloadRun) backup(full string) error {
 		return fmt.Errorf("locating %s under the sync root: %w", full, err)
 	}
 
+	if err := r.checkBackupDir(); err != nil {
+		return err
+	}
+
 	kept := filepath.Join(r.backupRoot, relative)
 
 	if err := os.MkdirAll(filepath.Dir(kept), 0o700); err != nil {
@@ -543,6 +553,27 @@ func (r *downloadRun) backup(full string) error {
 	}
 
 	r.backedUp++
+
+	return nil
+}
+
+// checkBackupDir refuses a backup directory that is a symlink or a file. MkdirAll would follow a
+// symlink, and the files moved into it would leave the sync root.
+func (r *downloadRun) checkBackupDir() error {
+	dir := filepath.Join(r.opts.Root, scan.BackupDirName)
+
+	info, err := os.Lstat(dir)
+
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+
+	case err != nil:
+		return fmt.Errorf("checking %s: %w", dir, err)
+
+	case !info.IsDir():
+		return fmt.Errorf("%s is not a plain directory, so backups would leave the sync root; remove it and pull again", dir)
+	}
 
 	return nil
 }
