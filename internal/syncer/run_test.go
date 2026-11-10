@@ -210,6 +210,69 @@ func TestRunOnAContainerWithoutManifestsMakesTheFirstPush(t *testing.T) {
 	assert.Equal(t, map[string]string{"first.txt": "hello"}, tree)
 }
 
+func TestRunCreatesTheDirectoryForTheFirstPush(t *testing.T) {
+	t.Parallel()
+
+	api := newFakeAPI(t)
+	client := api.client(t)
+
+	container, err := client.CreateContainer(context.Background())
+	require.NoError(t, err)
+
+	h := &harness{
+		api:         api,
+		store:       syncer.NewStore(client, container.ID, manifest.DefaultMetaPrefix),
+		containerID: container.ID,
+	}
+	work := filepath.Join(t.TempDir(), "not-created-yet")
+
+	result, err := h.runIn(work, func(context.Context) error {
+		info, statErr := os.Stat(work)
+		require.NoError(t, statErr, "the command must find its directory")
+		assert.True(t, info.IsDir())
+
+		writeInto(t, work, map[string]string{"first.txt": "hello"})
+
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Uploaded)
+
+	tree, _ := h.pulled(t)
+	assert.Equal(t, map[string]string{"first.txt": "hello"}, tree)
+}
+
+func TestRunDoesNotStartTheCommandWhenTheFirstPushDirectoryCannotBeCreated(t *testing.T) {
+	t.Parallel()
+
+	api := newFakeAPI(t)
+	client := api.client(t)
+
+	container, err := client.CreateContainer(context.Background())
+	require.NoError(t, err)
+
+	h := &harness{
+		api:         api,
+		store:       syncer.NewStore(client, container.ID, manifest.DefaultMetaPrefix),
+		containerID: container.ID,
+	}
+
+	occupied := filepath.Join(t.TempDir(), "a-file")
+	require.NoError(t, os.WriteFile(occupied, []byte("not a directory"), 0o600))
+
+	started := false
+
+	_, err = h.runIn(occupied, func(context.Context) error {
+		started = true
+
+		return nil
+	})
+
+	require.Error(t, err)
+	assert.False(t, started, "the command must not run without its directory")
+}
+
 func TestRunRefusesWhileAnotherWriterHoldsTheLease(t *testing.T) {
 	t.Parallel()
 

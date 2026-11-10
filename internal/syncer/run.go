@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -168,6 +169,11 @@ func pullBeforeRun(ctx context.Context, store *Store, reporter *progress.Reporte
 	switch {
 	case errors.Is(err, ErrNoManifest):
 		reporter.Phase("remote", "container is empty, this run makes the first push")
+
+		// A pull that finds a head creates the root. Without one, the command still needs it.
+		if err := os.MkdirAll(pull.Root, 0o755); err != nil {
+			return "", fmt.Errorf("creating %s: %w", pull.Root, err)
+		}
 
 		return "", nil
 
