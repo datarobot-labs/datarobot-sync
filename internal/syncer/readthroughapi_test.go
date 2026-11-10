@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -134,6 +135,49 @@ func TestDownloadWithAPIReadsSkipsTheObjectStore(t *testing.T) {
 	assert.Positive(t, h.api.fileReads.Load())
 	assert.Equal(t, fetchesBefore, h.api.blobFetches.Load(), "an explicit choice must not try the store first")
 	assert.Empty(t, heard.all(), "nothing fell back, so nothing is announced")
+}
+
+func TestDownloadWithAPIReadsRequestsNoLinks(t *testing.T) {
+	t.Parallel()
+
+	h, source := seeded(t)
+	h.store.UseAPIReads()
+
+	linksBefore := h.api.linkRequests.Load()
+	destination := t.TempDir()
+	h.download(t, destination)
+
+	assert.Equal(t, readTree(t, source), readTree(t, destination))
+	assert.Equal(t, linksBefore, h.api.linkRequests.Load(), "API reads use no presigned links")
+}
+
+// The first link answers 403 as an expired one does, and the link issued in its place points at
+// a store that does not answer.
+func TestDownloadFallsBackWhenARefreshedLinkIsUnreachable(t *testing.T) {
+	t.Parallel()
+
+	h, source := seeded(t)
+	h.api.failObjectStoreFor(http.StatusForbidden, ".dr-sync/packs/")
+
+	var packLinkIssues atomic.Int64
+
+	h.api.onLinks = func(names []string) {
+		for _, name := range names {
+			if strings.HasPrefix(name, ".dr-sync/packs/") {
+				if packLinkIssues.Add(1) == 2 {
+					h.api.blockObjectStoreFor(".dr-sync/packs/")
+				}
+
+				return
+			}
+		}
+	}
+
+	destination := t.TempDir()
+	h.download(t, destination)
+
+	assert.Equal(t, readTree(t, source), readTree(t, destination))
+	assert.Positive(t, h.api.fileReads.Load(), "the pack slices must have come through the API")
 }
 
 func TestDownloadDoesNotFallBackWhenTheObjectStoreAnswersAnError(t *testing.T) {

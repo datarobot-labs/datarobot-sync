@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -121,6 +122,53 @@ func TestOpenFileSurfacesAuthFailure(t *testing.T) {
 	assert.True(t, IsAuth(err))
 }
 
+func TestOpenFileRetriesATransientFailure(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int64
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			w.Header().Set("Retry-After", "0")
+			respond(t, w, http.StatusServiceUnavailable, `{"message":"try again"}`)
+
+			return
+		}
+
+		respondRaw(t, w, http.StatusOK, []byte("pack bytes"))
+	}))
+	defer srv.Close()
+
+	body, _, err := newTestClient(t, srv).OpenFile(context.Background(), "abc", "x", 0)
+	require.NoError(t, err)
+
+	defer body.Close()
+
+	content, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	assert.Equal(t, "pack bytes", string(content))
+	assert.EqualValues(t, 2, requests.Load())
+}
+
+func TestOpenFileDoesNotRetryARefusal(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int64
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		respond(t, w, http.StatusForbidden, `{"message":"no access"}`)
+	}))
+	defer srv.Close()
+
+	_, _, err := newTestClient(t, srv).OpenFile(context.Background(), "abc", "x", 0)
+	require.Error(t, err)
+
+	assert.True(t, IsAuth(err))
+	assert.EqualValues(t, 1, requests.Load(), "a refusal must not be retried")
+}
+
 func TestOpenFileDropsCredentialsOnRedirect(t *testing.T) {
 	t.Parallel()
 
@@ -177,6 +225,20 @@ func TestIsBlobUnreachable(t *testing.T) {
 		require.Error(t, err)
 
 		assert.False(t, IsBlobUnreachable(context.Background(), err))
+	})
+
+	t.Run("a store that redirects without end is reachable", func(t *testing.T) {
+		t.Parallel()
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, r.URL.String(), http.StatusFound)
+		}))
+		defer srv.Close()
+
+		_, _, err := newTestClient(t, srv).OpenBlob(context.Background(), srv.URL+"/blob?sig=1", 0)
+		require.Error(t, err)
+
+		assert.False(t, IsBlobUnreachable(context.Background(), err), "a refused redirect is an answer from the store")
 	})
 
 	t.Run("a canceled run is not an unreachable store", func(t *testing.T) {

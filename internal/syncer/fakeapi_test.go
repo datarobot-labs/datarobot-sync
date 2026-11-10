@@ -78,6 +78,11 @@ type fakeAPI struct {
 	// through files/{id}/file/, so a test can tell which path a download took.
 	blobFetches atomic.Int64
 	fileReads   atomic.Int64
+
+	// linkRequests counts links/ calls. onLinks, when set, runs at the start of each one with the
+	// names it asks for, so a test can change the store between two link issues.
+	linkRequests atomic.Int64
+	onLinks      func(names []string)
 }
 
 type fakeContainer struct {
@@ -449,6 +454,12 @@ func (a *fakeAPI) signLinks(t *testing.T, w http.ResponseWriter, r *http.Request
 		http.Error(w, `{"message":"bad body"}`, http.StatusBadRequest)
 
 		return
+	}
+
+	a.linkRequests.Add(1)
+
+	if a.onLinks != nil {
+		a.onLinks(body.FileNames)
 	}
 
 	a.mu.Lock()

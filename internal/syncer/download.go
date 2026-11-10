@@ -28,6 +28,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/datarobot-labs/datarobot-sync/internal/drapi"
 	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
 	"github.com/datarobot-labs/datarobot-sync/internal/packer"
 	"github.com/datarobot-labs/datarobot-sync/internal/progress"
@@ -463,10 +464,11 @@ func (r *downloadRun) parallel() int {
 	return DefaultUploadJobs
 }
 
-// fetch reads the needed packs and stages their members.
-func (r *downloadRun) fetch(ctx context.Context, plan *DownloadPlan) (int64, []string, error) {
-	if len(plan.Packs) == 0 {
-		return 0, nil, nil
+// packLinks returns a presigned link for every slice the plan reads, or none when reads go
+// through the API and would not use them.
+func (r *downloadRun) packLinks(ctx context.Context, plan *DownloadPlan) (map[string]drapi.Link, error) {
+	if r.store.viaAPI.Load() {
+		return map[string]drapi.Link{}, nil
 	}
 
 	names := make([]string, 0, len(plan.Packs))
@@ -476,7 +478,16 @@ func (r *downloadRun) fetch(ctx context.Context, plan *DownloadPlan) (int64, []s
 		}
 	}
 
-	links, err := r.store.SignedLinks(ctx, names)
+	return r.store.SignedLinks(ctx, names)
+}
+
+// fetch reads the needed packs and stages their members.
+func (r *downloadRun) fetch(ctx context.Context, plan *DownloadPlan) (int64, []string, error) {
+	if len(plan.Packs) == 0 {
+		return 0, nil, nil
+	}
+
+	links, err := r.packLinks(ctx, plan)
 	if err != nil {
 		return 0, nil, err
 	}

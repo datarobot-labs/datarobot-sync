@@ -136,17 +136,9 @@ func (r *downloadRun) openSlice(ctx context.Context, name string, links map[stri
 		}
 	}
 
-	body, _, err := r.store.client.OpenBlob(ctx, link.URL, 0)
-	if err == nil {
-		return body, nil
-	}
-
-	if r.store.fallBack(ctx, err) {
-		return r.store.openViaAPI(ctx, name)
-	}
-
-	if !drapi.IsBlobExpired(err) {
-		return nil, err
+	body, err := r.openPresigned(ctx, name, link.URL)
+	if err == nil || !drapi.IsBlobExpired(err) {
+		return body, err
 	}
 
 	// The URL lapsed anyway; one refresh and retry, then give up rather than loop.
@@ -155,7 +147,16 @@ func (r *downloadRun) openSlice(ctx context.Context, name string, links map[stri
 		return nil, err
 	}
 
-	body, _, err = r.store.client.OpenBlob(ctx, link.URL, 0)
+	return r.openPresigned(ctx, name, link.URL)
+}
+
+// openPresigned opens a presigned URL, and reads through the API when the object store does
+// not answer.
+func (r *downloadRun) openPresigned(ctx context.Context, name, signedURL string) (io.ReadCloser, error) {
+	body, _, err := r.store.client.OpenBlob(ctx, signedURL, 0)
+	if err != nil && r.store.fallBack(ctx, err) {
+		return r.store.openViaAPI(ctx, name)
+	}
 
 	return body, err
 }

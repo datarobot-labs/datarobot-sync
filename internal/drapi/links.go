@@ -110,7 +110,7 @@ func (c *Client) OpenBlob(ctx context.Context, signedURL string, offset int64) (
 
 	resp, err := c.blob.Do(req)
 	if err != nil {
-		return nil, 0, &transportError{Method: http.MethodGet, Path: blobPath, Err: err}
+		return nil, 0, blobDoError(blobPath, resp, err)
 	}
 
 	if err := checkBlobStatus(resp, offset); err != nil {
@@ -120,6 +120,17 @@ func (c *Client) OpenBlob(ctx context.Context, signedURL string, offset int64) (
 	}
 
 	return resp.Body, resp.ContentLength, nil
+}
+
+// blobDoError wraps a failed round trip of the blob client. Do returns the last response next
+// to the error when the redirect policy refuses a hop. The server answered then, so the result
+// is not a transport error: it must neither count as an unreachable store nor be retried.
+func blobDoError(path string, resp *http.Response, err error) error {
+	if resp != nil {
+		return fmt.Errorf("%s %s: %w", http.MethodGet, path, err)
+	}
+
+	return &transportError{Method: http.MethodGet, Path: path, Err: err}
 }
 
 // blobPath marks a presigned fetch in a transport error. IsBlobUnreachable matches it, so
@@ -142,7 +153,8 @@ func IsBlobUnreachable(ctx context.Context, err error) bool {
 
 // OpenFile streams one object through the API instead of a presigned URL, optionally from a
 // byte offset, and returns the body. The caller closes it. Unlike a presigned fetch, the request
-// carries the Authorization header, so the client strips it on every redirect.
+// carries the Authorization header, so the client strips it on every redirect. A failure to
+// open is retried like any other API request. A failure while reading the body is not.
 func (c *Client) OpenFile(ctx context.Context, containerID, name string, offset int64) (io.ReadCloser, int64, error) {
 	path := fmt.Sprintf("files/%s/file/", url.PathEscape(containerID))
 
@@ -151,9 +163,32 @@ func (c *Client) OpenFile(ctx context.Context, containerID, name string, offset 
 		return nil, 0, err
 	}
 
+	attempt := 0
+
+	for {
+		body, length, retryAfter, err := c.openFileOnce(ctx, target, path, offset)
+		if err == nil {
+			return body, length, nil
+		}
+
+		if attempt >= c.maxRetries || !isRetryable(err) {
+			return nil, 0, err
+		}
+
+		if waitErr := waitBeforeRetry(ctx, attempt, retryAfter); waitErr != nil {
+			return nil, 0, waitErr
+		}
+
+		attempt++
+	}
+}
+
+// openFileOnce performs one round trip of OpenFile. The returned duration is the server's
+// Retry-After, when it supplied one.
+func (c *Client) openFileOnce(ctx context.Context, target, path string, offset int64) (io.ReadCloser, int64, time.Duration, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return nil, 0, fmt.Errorf("building file request: %w", err)
+		return nil, 0, 0, fmt.Errorf("building file request: %w", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.token)
@@ -165,7 +200,7 @@ func (c *Client) OpenFile(ctx context.Context, containerID, name string, offset 
 
 	resp, err := c.blob.Do(req)
 	if err != nil {
-		return nil, 0, &transportError{Method: http.MethodGet, Path: path, Err: err}
+		return nil, 0, 0, blobDoError(path, resp, err)
 	}
 
 	if resp.StatusCode >= http.StatusBadRequest {
@@ -177,16 +212,16 @@ func (c *Client) OpenFile(ctx context.Context, containerID, name string, offset 
 			errBody = nil
 		}
 
-		return nil, 0, parseAPIError(http.MethodGet, path, resp, errBody)
+		return nil, 0, retryAfterOf(resp), parseAPIError(http.MethodGet, path, resp, errBody)
 	}
 
 	if err := checkBlobStatus(resp, offset); err != nil {
 		resp.Body.Close()
 
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 
-	return resp.Body, resp.ContentLength, nil
+	return resp.Body, resp.ContentLength, 0, nil
 }
 
 // checkBlobStatus validates an object response against the requested offset. The caller closes
