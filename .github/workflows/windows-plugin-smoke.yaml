@@ -109,11 +109,25 @@ jobs:
           if ($directCode -eq 0) { throw 'upload against a closed port should fail' }
           if ($viaDrCode -ne $directCode) { throw "exit code changed: direct $directCode, through dr $viaDrCode" }
           # Output differs by design: dr prefixes the program name differently and its installer's
-          # PowerShell profile adds noise. What must hold is that the path with a space and the
-          # catalog ID reach the request, which only happens when the wrapper passes arguments intact.
+          # PowerShell profile adds noise. What must hold is that the catalog ID reaches the request.
+          # The check below covers the directory with a space.
           $request = [regex]::Escape("files/$id/allFiles")
           if ($direct -notmatch $request) { throw 'the direct run never reached the request' }
           if ($viaDr -notmatch $request) { throw 'the catalog ID did not reach the request through dr' }
+
+          # A bad ignore pattern in the directory fails before any request, with the usage code 2
+          # instead of the connection error's 1. That needs the directory with a space to arrive
+          # intact, and it fails a wrapper that turns every nonzero exit code into 1.
+          Set-Content -Path (Join-Path $dir '.drsyncignore') -Value '/'
+          $badDirect = (& $exe.FullName upload $dir --catalog-id $id 2>&1 | Out-String)
+          $badDirectCode = $LASTEXITCODE
+          $badViaDr = (dr --skip-auth --skip-plugin-update-check --disable-telemetry sync upload $dir --catalog-id $id 2>&1 | Out-String)
+          $badViaDrCode = $LASTEXITCODE
+          Write-Host "bad pattern, direct ($badDirectCode):`n$badDirect`nthrough dr ($badViaDrCode):`n$badViaDr"
+
+          if ($badDirectCode -ne 2) { throw "a bad ignore pattern should exit 2, the direct run exited $badDirectCode" }
+          if ($badViaDrCode -ne 2) { throw "the usage exit code changed through dr: $badViaDrCode" }
+          if ($badViaDr -notmatch 'selects nothing') { throw 'the directory with a space did not reach the plugin through dr' }
 
           # The step would otherwise exit with the failing upload's code, since pwsh reports the
           # last native command's $LASTEXITCODE.
