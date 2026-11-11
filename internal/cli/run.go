@@ -235,9 +235,10 @@ func forwardSignals(process *os.Process, signals <-chan os.Signal, finished <-ch
 	}
 }
 
-// secondInterrupt closes the returned channel on the second signal it reads. The first interrupt
-// of a run is spent on the command, so only the second one is meant for the push. The stop
-// function ends the counting.
+// secondInterrupt closes the returned channel on the second SIGINT it reads. The first interrupt
+// of a run is spent on the command, so only the second one is meant for the push. SIGTERM does
+// not count: `dr` sends it to a plugin when it gets Ctrl-C itself, so one Ctrl-C arrives as
+// SIGINT from the terminal and SIGTERM from `dr`. The stop function ends the counting.
 func secondInterrupt(signals <-chan os.Signal) (second <-chan struct{}, stop func()) {
 	seconded := make(chan struct{})
 	done := make(chan struct{})
@@ -247,7 +248,11 @@ func secondInterrupt(signals <-chan os.Signal) (second <-chan struct{}, stop fun
 
 		for {
 			select {
-			case <-signals:
+			case sig := <-signals:
+				if sig != os.Interrupt {
+					continue
+				}
+
 				seen++
 
 				if seen == 2 {
