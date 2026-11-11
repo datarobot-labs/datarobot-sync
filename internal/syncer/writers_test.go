@@ -92,6 +92,13 @@ func TestWriterRefreshPreservesStartedAt(t *testing.T) {
 	require.Len(t, state.Writers, 1)
 	startedAt := state.Writers[0].StartedAt
 
+	// The Windows wall clock ticks every few milliseconds, so a refresh right after the
+	// registration can carry the same timestamp.
+	started, err := time.Parse(time.RFC3339Nano, startedAt)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return time.Now().UTC().After(started) },
+		time.Second, time.Millisecond, "the clock must move past the registration time")
+
 	require.NoError(t, registration.Refresh(context.Background(), 1, "0000000001-deadbeef"))
 
 	state, err = h.store.ReadState(context.Background())
