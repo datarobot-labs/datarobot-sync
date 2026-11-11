@@ -67,6 +67,15 @@ curl -sS -m 20 -o /dev/null -w '%{http_code}\n' \
 
 It prints `200`. On a timeout, stop and ask the install's administrator, because nothing on this page works without the API.
 
+If the Codespace has internet, download the plugin and clone the app repository:
+
+```sh
+mkdir -p "$STORAGE/tools/bin"
+curl -sSL "https://github.com/datarobot-labs/datarobot-sync/releases/download/v<version>/dr-sync_<version>_linux_amd64.tar.gz" \
+  | tar -xz -C "$STORAGE/tools/bin" dr-sync
+git clone <repository-url> "$STORAGE/<app>"
+```
+
 If the install has no internet, bring in three files first:
 
 1. On a machine with internet, download `dr-sync_<version>_linux_amd64.tar.gz` from the [datarobot-sync releases](https://github.com/datarobot-labs/datarobot-sync/releases) and `pulumi-resource-datarobot-v<version>-linux-amd64.tar.gz` from the [provider releases](https://github.com/datarobot-community/pulumi-datarobot/releases). The provider version must match `pip show pulumi-datarobot` in the Codespace.
@@ -178,11 +187,12 @@ Set up your machine, then run the later-deploy command. The first run pulls the 
 
 | You see | What it means | Do this |
 | --- | --- | --- |
-| Exit code `4` | A teammate is deploying, or the state changed during your run. The message names who holds the container and until when | Wait, then run the command again. If that run was killed, the hold lasts up to 30 minutes. Wait it out, or add `--force` right after `"$STATE_DIR"` |
+| Exit code `4`, `another dr-sync run holds this container` | A teammate is deploying, or a killed run holds the lease. Nothing ran. The message names who holds it and until when | Wait, then run the command again. After a killed run, the hold lasts up to 30 minutes. Wait it out, or add `--force` right after `"$STATE_DIR"` |
+| Exit code `4`, `the container advanced` or `another writer claimed` | Pulumi ran, and a teammate pushed first. Your run's state is only in the state folder | Do not run again yet. The next run moves your state to `.dr-sync-backup/`, and the deploy's resources are missing from the state you continue with. Keep that folder and ask for help |
 | Exit code `7` | Pulumi failed. The state is still saved | Read the Pulumi error, fix it, run again |
 | Exit code `6` | The pull did not finish, so nothing ran | Run again. If it repeats, ask for help before you deploy |
 | Exit code `130`, or `255` from `datarobot sync` | You pressed Ctrl-C. With `dr-sync`, Pulumi stops and the state is pushed. With `datarobot sync`, `dr` ends the plugin 5 seconds after Ctrl-C, so the push or the lease release can be cut short | Run the command again. If it exits `4`, a killed run still holds the lease: add `--force`. Your unpushed local copy is moved to `.dr-sync-backup/` with a warning. If Pulumi reports a lock, see the next rows. Avoid Ctrl-C during a deploy |
-| A warning that names `.dr-sync-backup/` | Another machine deployed since your last run, so the newer state replaced your local copy | Nothing. Your old copy is in that folder, and you can delete it |
+| A warning that names `.dr-sync-backup/` | The state on this machine differed from the head, so the head replaced it. Either a teammate deployed since your last run, or your last run did not push (exit `4`, `130`, `255` or a kill) | If your last run here pushed, nothing: delete the folder when you like. Otherwise keep it, because it can hold the only record of what that deploy created. Do not deploy again until someone has merged it back |
 | `the stack is currently locked` | A killed run left a lock on this machine | Run `pulumi cancel --stack <install>`, then the deploy command again |
 | `Application name must be unique` | An earlier deploy died while it created the app. The app exists, but the saved state does not know it | Do not retry, because each retry leaves one more app named `<source name> <timestamp>`. Delete the app with the clashing name and those extra apps in the UI, then deploy again |
 | The Codespace or the state folder is gone | Local files only. The state is in Files | Codespace: set up the machine again. Then run the later-deploy command |
@@ -244,7 +254,7 @@ curl -sS -m 20 -o /dev/null -w '%{http_code}\n' \
 - This is a field tool, not a supported state service. When the install reaches an S3 or Azure Blob bucket, use Pulumi's own `s3://` or `azblob://` backend.
 - State belongs to one install. Never copy a state container or a stack to another install.
 - The state does not hold `Pulumi.<install>.yaml`. Deploying with different local settings reverts a teammate's change, so commit the file.
-- An Editor can delete files in the state container. Older generations keep them.
+- An Editor can delete files in the state container. A sync's own deletions leave older generations intact, but older generations share the same pack files. Deleting a pack in Files can break every generation that uses it, so tell Editors to leave `.dr-sync/` alone.
 - If a deploy dies while it creates an app, that app is missing from the saved state, and `pulumi refresh` does not find it. Follow the `Application name must be unique` row above.
 - `datarobot sync` runs through `dr`, which ends a plugin 5 seconds after Ctrl-C. A deploy interrupted that way can leave the lease held for up to 30 minutes. The standalone `dr-sync` has no such limit.
 - Not tested: an install behind an HTTP proxy, a Files upload through the UI (the tests used the API), and the Pulumi workflow on Windows.
