@@ -266,4 +266,3 @@ curl -sS -m 20 -o /dev/null -w '%{http_code}\n' \
 - An Editor can delete files in the state container. A sync's own deletions leave older generations intact, but older generations share the same pack files. Deleting a pack in Files can break every generation that uses it, so tell Editors to leave `.dr-sync/` alone.
 - If a deploy dies while it creates an app, that app is missing from the saved state, and `pulumi refresh` does not find it. Follow the `Application name must be unique` row above.
 - `datarobot sync` runs through `dr`, which ends a plugin 5 seconds after Ctrl-C. A deploy interrupted that way can leave the lease held for up to 30 minutes. The standalone `dr-sync` has no such limit.
-- Not tested: an install behind an HTTP proxy and the Pulumi workflow on Windows.
