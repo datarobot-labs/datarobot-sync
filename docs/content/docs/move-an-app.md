@@ -85,7 +85,7 @@ If the install has no internet, bring in three files first:
    git bundle create repo.bundle --all
    ```
 
-3. Upload the three files to one Files item in the target install, and copy the item's ID.
+3. Put the three files in one folder and upload the folder to the target install, so they form one Files item, and copy the item's ID. The files keep their plain names inside the item. Uploading the files one at a time creates one item per file, and the download step below then needs one ID per file.
 4. In the Codespace terminal:
 
    ```sh
@@ -266,4 +266,4 @@ curl -sS -m 20 -o /dev/null -w '%{http_code}\n' \
 - An Editor can delete files in the state container. A sync's own deletions leave older generations intact, but older generations share the same pack files. Deleting a pack in Files can break every generation that uses it, so tell Editors to leave `.dr-sync/` alone.
 - If a deploy dies while it creates an app, that app is missing from the saved state, and `pulumi refresh` does not find it. Follow the `Application name must be unique` row above.
 - `datarobot sync` runs through `dr`, which ends a plugin 5 seconds after Ctrl-C. A deploy interrupted that way can leave the lease held for up to 30 minutes. The standalone `dr-sync` has no such limit.
-- Not tested: an install behind an HTTP proxy, a Files upload through the UI (the tests used the API), and the Pulumi workflow on Windows.
+- Not tested: an install behind an HTTP proxy and the Pulumi workflow on Windows.
