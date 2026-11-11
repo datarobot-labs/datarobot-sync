@@ -74,6 +74,9 @@ type UploadOptions struct {
 	// The push is refused if the container's head is any other manifest. Force does not override
 	// it.
 	ExpectHead string
+	// ExpectEmpty makes the push refuse a container that holds a manifest. ExpectHead is then
+	// empty, which on its own means no check.
+	ExpectEmpty bool
 
 	DryRun bool
 }
@@ -177,7 +180,7 @@ func (r *uploadRun) write(ctx context.Context, plan *UploadPlan, result *UploadR
 		return err
 	}
 
-	defer r.releaseLease(ctx, lease)
+	defer releaseLease(ctx, r.reporter, lease)
 
 	// Deferred after releaseLease, so it runs first: renewal has to stop before the release.
 	stopRenewing := lease.KeepAlive(ctx, func(err error) {
@@ -263,7 +266,7 @@ func (r *uploadRun) readRemoteAndScan(ctx context.Context) error {
 			return err
 		}
 
-		if r.opts.ExpectHead != "" && ref.ID != r.opts.ExpectHead {
+		if (r.opts.ExpectHead != "" || r.opts.ExpectEmpty) && ref.ID != r.opts.ExpectHead {
 			return &StaleBaseError{Expected: r.opts.ExpectHead, Actual: ref.ID}
 		}
 
@@ -512,23 +515,6 @@ func (r *uploadRun) acquireLease(ctx context.Context) (*LeaseHolder, error) {
 	return holder, nil
 }
 
-func (r *uploadRun) releaseLease(ctx context.Context, lease *LeaseHolder) {
-	if lease == nil {
-		return
-	}
-
-	// Release with a context that survives an interrupt, or the delete is canceled with the
-	// upload and the lease stays until it expires.
-	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseReleaseTimeout)
-	defer cancel()
-
-	// A release failure is a warning, not a failure: the lease expires on its own, and
-	// failing a completed sync over a cleanup call would be the wrong trade.
-	if err := lease.Release(releaseCtx); err != nil {
-		r.reporter.Warn(err.Error())
-	}
-}
-
 // commit uploads the packs and the new manifest.
 func (r *uploadRun) commit(ctx context.Context, plan *UploadPlan, built []*packer.Built, present map[string]bool) (*manifest.Manifest, error) {
 	packs := make([]manifest.Pack, 0, len(built))
@@ -704,6 +690,12 @@ type StaleBaseError struct {
 }
 
 func (e *StaleBaseError) Error() string {
+	if e.Expected == "" {
+		return fmt.Sprintf("this push expects an empty container but it is at %s; "+
+			"another writer pushed in between, so download to bring their changes in, then push again",
+			describeGeneration(e.Actual))
+	}
+
 	return fmt.Sprintf("this push is based on %s but the container is at %s; "+
 		"another writer pushed in between, so download to bring their changes in, then push again",
 		describeGeneration(e.Expected), describeGeneration(e.Actual))

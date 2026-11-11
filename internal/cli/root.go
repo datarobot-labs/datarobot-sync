@@ -79,6 +79,7 @@ func NewRoot() *cobra.Command {
 		newUploadCommand(global),
 		newDownloadCommand(global),
 		newWatchCommand(global),
+		newRunCommand(global),
 		newStatusCommand(global),
 		newLSCommand(global),
 		newInspectCommand(global),
