@@ -185,13 +185,22 @@ Set up your machine, then run the later-deploy command. The first run pulls the 
 
 ## When it fails
 
+Several rows say the state may be only on this machine. In that case, save your state first: copy the whole state folder, including `.dr-sync-backup/`, to a folder outside it.
+
+```sh
+cp -a "$STATE_DIR" "$STATE_DIR.saved"
+```
+
+The next run replaces the state folder with the head, and `.dr-sync-backup/` does not exist until it does, so this copy is the only safe record of what Pulumi created. Then ask for help.
+
 | You see | What it means | Do this |
 | --- | --- | --- |
 | Exit code `4`, `another dr-sync run holds this container` | A teammate is deploying, or a killed run holds the lease. Nothing ran. The message names who holds it and until when | Wait, then run the command again. After a killed run, the hold lasts up to 30 minutes. Wait it out, or add `--force` right after `"$STATE_DIR"` once you confirm the holder named in the message is not still deploying |
-| Exit code `4`, `the container advanced` or `another writer claimed` | Pulumi ran, and a teammate pushed first. Your run's state is only in the state folder | Do not run again yet. The next run moves your state to `.dr-sync-backup/`, and the deploy's resources are missing from the state you continue with. Keep that folder and ask for help |
+| Exit code `4`, `the container advanced` or `another writer claimed` | Pulumi ran, and a teammate pushed first. Your run's state is only in the state folder | Do not run again yet, because the deploy's resources would be missing from the state you continue with. Save your state first, then ask for help |
 | Exit code `7` | Pulumi failed. The state is still saved | Read the Pulumi error, fix it, run again |
 | Exit code `6` | The pull did not finish, so nothing ran | Run again. If it repeats, ask for help before you deploy |
-| Exit code `130`, or `255` from `datarobot sync` | You pressed Ctrl-C. With `dr-sync`, Pulumi stops and the state is pushed. With `datarobot sync`, `dr` ends the plugin 5 seconds after Ctrl-C, so the push or the lease release can be cut short | Read the last lines of the output. `interrupted; the tree was pushed as it stood` means the state is saved: run the command again. Any other message, or exit `255`, means the state may be only on this machine. Do not run again, because the next run moves it to `.dr-sync-backup/` and Pulumi then runs on a state that lacks it, which creates duplicate resources. Keep the folder and ask for help. If the rerun exits `4`, a killed run still holds the lease: add `--force` only after you confirm nobody else is deploying. If Pulumi reports a lock, see the next rows. Avoid Ctrl-C during a deploy |
+| Any other exit code, such as `3` (API or sign-in failure) | Unknown. If Pulumi started and the push is not confirmed, the state may be only on this machine | Do not run again. Save your state first, then ask for help |
+| Exit code `130`, or `255` from `datarobot sync` | You pressed Ctrl-C. With `dr-sync`, Pulumi stops and the state is pushed. With `datarobot sync`, `dr` ends the plugin 5 seconds after Ctrl-C, so the push or the lease release can be cut short | Read the last lines of the output. `interrupted; the tree was pushed as it stood` means the state is saved: run the command again. Any other message, or exit `255`, means the state may be only on this machine. Do not run again, because Pulumi would run on a state that lacks it and create duplicate resources. Save your state first, then ask for help. If a later run exits `4`, a killed run still holds the lease: add `--force` only after you confirm nobody else is deploying. If Pulumi reports a lock, see the next rows. Avoid Ctrl-C during a deploy |
 | A warning that names `.dr-sync-backup/` | The state on this machine differed from the head, so the head replaced it. Either a teammate deployed since your last run, or your last run did not push (exit `4`, `130`, `255` or a kill) | If your last run here pushed, nothing: delete the folder when you like. Otherwise keep it, because it can hold the only record of what that deploy created. Do not deploy again until someone has merged it back |
 | `the stack is currently locked` | A killed run left a lock on this machine | Run `pulumi cancel --stack <install>`, then the deploy command again |
 | `Application name must be unique` | An earlier deploy died while it created the app. The app exists, but the saved state does not know it | Do not retry, because each retry leaves one more app named `<source name> <timestamp>`. Delete the app with the clashing name and those extra apps in the UI, then deploy again |
