@@ -41,6 +41,8 @@ func classify(err error) error {
 		return Fail(CodeConflict, err)
 	case syncer.IsStaleManifest(err), packer.IsIntegrityError(err):
 		return Fail(CodeIntegrity, err)
+	case syncer.IsIncompleteDownload(err):
+		return Fail(CodePartial, err)
 	case errors.Is(err, syncer.ErrNoManifest), errors.Is(err, syncer.ErrInvalidTag):
 		return Fail(CodeUsage, err)
 	case errors.Is(err, manifest.ErrUnsupportedVersion):
@@ -74,6 +76,7 @@ type uploadFlags struct {
 	noLock           bool
 	leaseTTL         time.Duration
 	force            bool
+	expectHead       string
 }
 
 // register adds the shared upload flags. deleteDefault lets a caller flip what --delete
@@ -110,6 +113,13 @@ func (u *uploadFlags) register(cmd *cobra.Command, deleteDefault bool) {
 	flags.BoolVar(&u.force, "force", false, "ignore a foreign lease and a moved head")
 }
 
+// registerExpectHead adds --expect-head to the one-shot push commands. watch does not get it:
+// it pushes many times, so a single expected head would only fit its first cycle.
+func (u *uploadFlags) registerExpectHead(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&u.expectHead, "expect-head", "",
+		"refuse to push unless the container's head is this manifest id, the one `download` printed; --force does not override it")
+}
+
 func newUploadCommand(global *globalFlags) *cobra.Command {
 	opts := &uploadFlags{}
 
@@ -127,6 +137,7 @@ func newUploadCommand(global *globalFlags) *cobra.Command {
 	}
 
 	opts.register(cmd, false)
+	opts.registerExpectHead(cmd)
 
 	return cmd
 }
@@ -152,32 +163,8 @@ func runUpload(cmd *cobra.Command, args []string, global *globalFlags, opts *upl
 		return err
 	}
 
-	result, err := syncer.Upload(ctx, session.store, session.reporter, syncer.UploadOptions{
-		Root:             root,
-		Check:            session.check,
-		Matcher:          session.matcher,
-		Delete:           opts.delete,
-		FollowSymlinks:   opts.followSymlinks,
-		Level:            opts.level,
-		PackInputMax:     opts.packInputMax,
-		BigFileThreshold: opts.bigFileThreshold,
-		SliceSize:        opts.sliceSize,
-		Jobs:             global.jobs,
-		CompressJobs:     opts.compressJobs,
-		UploadJobs:       opts.uploadJobs,
-		TempDir:          opts.tempDir,
-		MaxStageFiles:    opts.maxStageFiles,
-		MaxStageBytes:    opts.maxStageBytes,
-		Overwrite:        overwrite,
-		KeepGenerations:  opts.keepGenerations,
-		GCGrace:          opts.gcGrace,
-		NoGC:             opts.noGC,
-		CompactThreshold: opts.compactThreshold,
-		Lock:             !opts.noLock,
-		LeaseTTL:         opts.leaseTTL,
-		Force:            opts.force,
-		DryRun:           global.dryRun,
-	})
+	result, err := syncer.Upload(ctx, session.store, session.reporter,
+		opts.uploadOptions(root, global, session, overwrite))
 	if err != nil {
 		return classify(err)
 	}
@@ -207,6 +194,36 @@ func runUpload(cmd *cobra.Command, args []string, global *globalFlags, opts *upl
 	})
 
 	return err
+}
+
+func (u *uploadFlags) uploadOptions(root string, global *globalFlags, session *session, overwrite drapi.OverwriteStrategy) syncer.UploadOptions {
+	return syncer.UploadOptions{
+		Root:             root,
+		Check:            session.check,
+		Matcher:          session.matcher,
+		Delete:           u.delete,
+		FollowSymlinks:   u.followSymlinks,
+		Level:            u.level,
+		PackInputMax:     u.packInputMax,
+		BigFileThreshold: u.bigFileThreshold,
+		SliceSize:        u.sliceSize,
+		Jobs:             global.jobs,
+		CompressJobs:     u.compressJobs,
+		UploadJobs:       u.uploadJobs,
+		TempDir:          u.tempDir,
+		MaxStageFiles:    u.maxStageFiles,
+		MaxStageBytes:    u.maxStageBytes,
+		Overwrite:        overwrite,
+		KeepGenerations:  u.keepGenerations,
+		GCGrace:          u.gcGrace,
+		NoGC:             u.noGC,
+		CompactThreshold: u.compactThreshold,
+		Lock:             !u.noLock,
+		LeaseTTL:         u.leaseTTL,
+		Force:            u.force,
+		ExpectHead:       u.expectHead,
+		DryRun:           global.dryRun,
+	}
 }
 
 // parseOverwrite validates the strategy, rejecting the two the API offers but dr-sync must
@@ -281,6 +298,7 @@ func newStatusCommand(global *globalFlags) *cobra.Command {
 	}
 
 	opts.register(cmd, false)
+	opts.registerExpectHead(cmd)
 
 	return cmd
 }

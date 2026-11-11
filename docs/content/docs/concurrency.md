@@ -26,6 +26,17 @@ fork after the fact. Re-running upload heals it: it re-classifies against the ne
 reuses the already-uploaded packs.
 {{< /callout >}}
 
+{{< callout type="warning" >}}
+**Stale tree.** The claim stops two writers that plan the same generation. It does not stop
+a tree that is older than the head. The stale files look like local changes, so a push
+overwrites a teammate's newer version in the new manifest. Pass `--expect-head <id>`, the
+manifest ID the last `download` printed, and the push exits with code 4 when the container
+has moved on. `--force` does not override it. [`run`]({{% relref "docs/run" %}}) does both around a
+command, under a lease. Pull with `--backup` to keep your own edits:
+every local file the pull replaces or removes is moved to `.dr-sync-backup/<timestamp>/` in
+the sync root, and datarobot-sync never uploads that directory.
+{{< /callout >}}
+
 A push that loses the race can leave orphan packs, because new packs commit in a stage
 before the manifest. Tier-1 garbage collection removes them, and a re-run reuses them.
 

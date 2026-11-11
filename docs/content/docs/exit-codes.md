@@ -9,9 +9,10 @@ weight = 9
 | 1 | unexpected failure |
 | 2 | usage, config, or precondition error |
 | 3 | API or authentication failure |
-| 4 | conflict: a lease is held, the head moved, or a fork was found |
+| 4 | conflict: a lease is held, the head moved, `--expect-head` does not match, or a fork was found |
 | 5 | integrity failure: checksum mismatch or a missing pack |
 | 6 | partial success: some files failed, the rest are complete |
+| 7 | the command under `run` failed, and the push still happened |
 | 130 | interrupted |
 
 `--output json` writes one JSON object per line to stdout, with human output on stderr,

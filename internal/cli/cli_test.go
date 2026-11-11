@@ -66,7 +66,7 @@ func TestRootHelpListsEveryCommand(t *testing.T) {
 	require.Equal(t, CodeOK, code)
 
 	for _, name := range []string{
-		"init", "upload", "download", "watch", "status", "ls", "inspect", "compact", "gc", "version",
+		"init", "upload", "download", "watch", "run", "status", "ls", "inspect", "compact", "gc", "version",
 		// cobra contributes this one, and it is worth having.
 		"completion",
 	} {
@@ -86,6 +86,20 @@ func TestWatchDefaultsToDeleteUnlikeUpload(t *testing.T) {
 		"upload must stay additive by default")
 	assert.Contains(t, deleteFlagLine(t, watchHelp), "default true",
 		"watch must mirror the local tree by default")
+}
+
+func TestExpectHeadIsOnTheOneShotPushCommandsOnly(t *testing.T) {
+	isolate(t)
+
+	for _, command := range []string{"upload", "status"} {
+		_, help, _ := run(t, command, "--help")
+		assert.Contains(t, help, "--expect-head", "%s must offer --expect-head", command)
+	}
+
+	code, _, errOut := run(t, "watch", "./any", "--expect-head", "0000000001-abc")
+
+	assert.Equal(t, int(CodeUsage), code, "watch must reject a flag it would ignore")
+	assert.Contains(t, errOut, "unknown flag: --expect-head")
 }
 
 // deleteFlagLine finds the flag-listing line for --delete, not any mention of it in prose:

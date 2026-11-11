@@ -21,6 +21,15 @@ datarobot sync upload ./src --delete
 # Make the local tree mirror the remote exactly
 datarobot sync download ./src --delete
 
+# Run a command with the container as its working state: lease, pull, command, push
+datarobot sync run ./state -- pulumi up
+
+# Pull without losing local edits: replaced and removed files go to .dr-sync-backup/<timestamp>/
+datarobot sync download ./src --backup
+
+# Push only if nobody pushed since the pull that printed this manifest ID
+datarobot sync upload ./src --expect-head <manifest-id>
+
 # Only part of the tree
 datarobot sync download ./src --prefix docs/ --prefix src/api/
 
@@ -60,20 +69,23 @@ node_modules/
 (`DATAROBOT_CONFIG`, default `~/.config/datarobot/drconfig.yaml`), `--meta-prefix`
 (`.dr-sync/`), `--check auto|full|size|mtime`, `--exclude`/`--include`/`--exclude-from`
 (gitignore-style, matched on the relative POSIX path), `--jobs`, `--timeout`,
-`--retries`, `-v/--verbose`, `-q/--quiet`, `--output text|json`, `--no-color`,
-`--dry-run`, `--yes`. The token comes from `DATAROBOT_API_TOKEN` or the config file
+`--retries`, `--no-presign` (`DR_SYNC_NO_PRESIGN`), `-v/--verbose`, `-q/--quiet`,
+`--output text|json`, `--no-color`, `--dry-run`, `--yes`. The token comes from `DATAROBOT_API_TOKEN` or the config file
 only — no flag, so it stays out of `ps` and shell history.
 
 `upload` adds `--delete`, `--level 0|1|3|6|9` (default 6), `--pack-size`,
 `--pack-input-max`, `--big-file-threshold`, `--slice-size`, `--max-stage-bytes`,
 `--max-stage-files`, `--keep-generations`, `--gc-grace`, `--no-gc`, `--auto-compact`,
-`--compact-threshold`, `--no-lock`, `--force`, `--follow-symlinks`,
+`--compact-threshold`, `--no-lock`, `--force`, `--expect-head`, `--follow-symlinks`,
 `--overwrite error|replace`.
 
-`download` adds `--delete`, `--delete-excluded`, `--prefix` (repeatable),
+`download` adds `--delete`, `--delete-excluded`, `--backup`, `--prefix` (repeatable),
 `--generation`/`--manifest` (pull a retained older generation), `--parallel`,
 `--link-duration`, `--no-local-reuse`, `--preserve-special-modes`,
 `--allow-unsafe-links`, `--tmpdir` (must share the filesystem with root).
+
+`run` takes the `upload` flags except `--expect-head` and `--compact`, with `--delete` on by
+default. See [Run]({{% relref "docs/run" %}}).
 
 See [Watch]({{% relref "docs/watch" %}}) for the flags specific to the resident
 mirroring mode.

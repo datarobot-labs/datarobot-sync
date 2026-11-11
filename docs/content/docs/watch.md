@@ -10,7 +10,8 @@ changes, instead of running `upload` in a loop yourself:
 datarobot sync watch ./src
 ```
 
-It shares every `upload` flag, but `--delete` defaults **on** — watch mirrors the local
+It shares every `upload` flag except `--expect-head`, which it rejects because it pushes
+every cycle. `--delete` defaults **on** — watch mirrors the local
 tree rather than only adding to it — and `--timeout` bounds one push, not the whole
 process. A filesystem event only ever triggers a rescan; it is never trusted on its own,
 so a missed event costs latency, not correctness.

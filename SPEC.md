@@ -81,6 +81,7 @@ below.
 | V6 | Is `fileChecksum` populated for files *we* upload via a stage, and how soon? | **Yes, immediately** on commit, and it equals SHA-256 of the raw bytes exactly. The free pre-flight integrity check is available. |
 | V7 | Same name twice in one stage? Does `overwrite=error` fail the whole commit? | Duplicate *within* a stage: accepted, deduplicated, last wins. Duplicate against a name **already in the container**: `409 Duplicate file name(s): <name>` and **nothing from that stage lands**. |
 | V8 | Two writers stage the same name in different stages and commit at the same instant. How many commits land? | **Exactly one**: one `200` and one `409`, and the loser's other files never land (50 of 50 rounds, readiness install, 2026-11-06). Name uniqueness inside one `fromStage` commit is a compare-and-swap. |
+| V9 | Can the API return an object's bytes itself, with no presigned URL? | **Yes.** `GET files/{id}/file/?fileName=<name>` answers `200` with the bytes and takes the `Authorization` header. A missing name is `404 Filename <name> does not exist.`, and names containing `/` work as the query value (readiness install, 2026-11-06). In a dev STS Codespace the presigned S3 host timed out while this route worked. |
 
 Also established:
 
@@ -238,7 +239,8 @@ immediately valid rather than a special case everywhere. Prints the id and the
 2. **Read head** (concurrent with 3). `GET files/{id}/allFiles/?prefix=.dr-sync/&limit=1000`
    with pagination → the objects, their sizes and `fileChecksum`s. Head = lexicographic max
    manifest; fetch via `/links/`, xz-decode. Also `GET catalogItems/{id}/extendedDetails/`
-   for `catalogVersionId`.
+   for `catalogVersionId`. With `--expect-head <id>`, a head other than `<id>` ends the run
+   here with exit 4, before any hashing or upload, and `--force` does not override it.
 3. **Walk + hash** (concurrent with 2). One walker feeding `min(GOMAXPROCS,8)` hashers.
    Under `--check=auto` (default) a hasher first consults the parent manifest: matching
    `size` + `modTime` + `mode` ⇒ adopt the recorded SHA without reading the file. This is
@@ -333,19 +335,34 @@ recognizes by content-addressed name and skips; anything never re-run is reaped 
    mechanism**. Refresh any link within 300 s of expiry before starting a slice; on a 403 or
    mid-stream error, re-issue `/links/` for the remainder and resume with
    `Range: bytes=<sliceOffset>-`. A `/links/` batch fails wholesale if any one name is
-   missing, so on that 4xx re-issue singly to name the culprit.
+   missing, so on that 4xx re-issue singly to name the culprit. When the object store cannot
+   be reached, reads go through `GET files/{id}/file/` with credentials instead (V9): on
+   request with `--no-presign`, and on its own after a presigned fetch fails with no HTTP
+   response at all. An answered error such as a 403 never triggers it, so an authorization
+   problem is not hidden behind a fallback.
 6. **Apply** single-threaded in sorted order: `MkdirAll` first, `os.Rename` from the tmp dir
    (which lives under `<root>` precisely so the rename is same-filesystem and atomic),
    symlinks replaced, then `Chmod` then `Chtimes` (mtime last or the write resets it).
    Local-reuse sources are first copied into the scratch directory and hashed, before anything
    is replaced, so one placement in a pull cannot change what a later copy reads. A source that
    no longer matches ends the run.
+   With `--backup`, each existing local path the apply is about to replace is first renamed
+   to `<root>/.dr-sync-backup/<UTC stamp>/<relative path>`, so a local edit that a teammate's
+   newer push overrides stays recoverable. A file the pull leaves alone is not copied. A directory
+   replaced by a file moves aside whole, and a directory that already holds part of its content
+   in the backup is merged.
    **Strip setuid/setgid/sticky** unless `--preserve-special-modes` — materializing a setuid
    binary out of a remote blob is a security hole. Reject any manifest path that is
    absolute, contains `..` or NUL, starts with the meta prefix, or case-collides on a
    case-insensitive filesystem (probed once; collisions warn-and-skip).
 7. Extraneous local files are listed and kept; `--delete` removes them, `--delete-excluded`
-   also prunes emptied dirs. Never touch anything outside root or under the meta prefix.
+   also prunes emptied dirs. With `--backup`, `--delete` moves them into the backup directory
+   instead of unlinking them. Never touch anything outside root or under the meta prefix.
+   `.dr-sync-backup/` is reserved like `.dr-sync-tmp/`: scans, `watch` and the download plan
+   skip it, so a backup never reaches the container and a manifest path under it is skipped with a warning.
+   The names are compared without case, since a filesystem that ignores case treats a different
+   spelling as the same directory. A `.dr-sync-backup` that is a symlink or a file stops the
+   pull, because the moves would leave the sync root.
 8. A pack that fails after `--retries` marks its blobs failed and the rest continue: what
    landed is SHA-verified and atomically renamed, what didn't is untouched. Exit 6 with the
    list. Re-running picks up exactly the remainder, because local truth is re-derived every
@@ -414,6 +431,46 @@ collision with its own leftover). `AcquireLease` therefore seeds the new holder'
 from the highest one already on record for that client id, so a resumed run always picks an
 unused name.
 
+### Run
+
+`dr-sync run <path> -- <command> [args...]` makes a directory a working copy of the container
+for one command. It exists for tools that keep state in a directory several people or CI jobs
+share, where the pull, the command and the push have to happen as one guarded unit.
+
+1. **Lease.** Take the advisory lease for the whole run and renew it while the command works.
+   A foreign lease ends the run with exit 4 before anything is pulled; `--force` overrides it,
+   `--no-lock` skips it.
+2. **Pull.** Download the head into `<path>` with `Delete` (the default; `--delete=false` turns
+   it off) and `Backup` always on, so the command starts from the head and every local file
+   the pull replaces or removes is kept under `.dr-sync-backup/`, and a warning names that
+   directory, because the files may be state an earlier run failed to push. A pull that leaves
+   paths out, by failing to fetch them or by skipping an entry such as a symlink with an
+   absolute target, ends the run with exit 6 before the command starts, because the mirror push
+   would drop them. A container with no manifest at all skips the pull: the push then expects
+   an empty container, so a first push by another writer ends the run with exit 4.
+3. **Command.** Run it in the caller's working directory with `DR_SYNC_ROOT` set to the
+   absolute path of `<path>`. It is not tied to the run's context, so an interrupt reaches it
+   through the terminal and it can wind down and write its state. SIGTERM, which only
+   `dr-sync` receives, is forwarded to the command and not to what the command started, so a
+   shell wrapper should `exec` the last command. An interrupt that landed before the command
+   starts ends the run with exit 130 without running it.
+4. **Push.** Upload `<path>` with `ExpectHead` set to the manifest the pull reproduced, even
+   when the command failed: the state a failed run leaves is what the next run starts from.
+   The push uses a context that outlives the first interrupt of the run, and the second one
+   cancels it. A head that moved ends the run with exit 4, which a writer that ignored the
+   lease, a lease that lapsed, or `--no-lock` can cause. The command's changes stay in `<path>`
+   and the message says so.
+5. **Release** the lease, with a context that survives an interrupt.
+
+A command that fails exits the run with 7 after a successful push. A sync failure wins over a
+command failure. Any interrupt exits 130. `--dry-run`, `--output json` (events would mix into
+the command's stdout) and `--compact` are refused as usage errors, and `run` has no
+`--expect-head`: it supplies its own.
+
+Not provided: `lock` and `unlock`. A lease needs a process that renews it, so one that
+outlives its command would lapse after the TTL, and `run <path> -- $SHELL` covers a manual
+session.
+
 ### Garbage and compaction
 
 Per pack, `liveBytes` = Σ sizes of members still referenced; `liveRatio` = that over
@@ -460,6 +517,14 @@ when a fork is seen).
 - *Lost answer.* A manifest commit can land while its answer is lost. After any failed
   commit the run re-reads the container, and when the head is its own manifest it reports
   success instead of the retry's error.
+- *Stale tree.* The claim stops two writers that plan one generation. It does not stop a
+  tree that is older than the head: its stale file differs from the head's entry, so the
+  next push records it as a local change and a teammate's newer version is overwritten in
+  the new manifest. Nothing in the container knows what the tree was based on, because there
+  is no local state (invariant 7). A caller that does know passes `--expect-head <id>`, the
+  manifest id the last `download` printed, and the push ends with exit 4 when the head has
+  moved. `--backup` on the pull covers the other half: the local edit survives the merge.
+  `run` does both around a command, under a lease.
 - *Read during compact.* A reader holding manifest N whose packs get deleted gets a missing
   name from `/links/` → exit 5, "re-run". Bounded by the grace window, not eliminated.
 - *Multi-stage commit.* Packs land in earlier catalog versions than the manifest; between
@@ -502,7 +567,7 @@ internal/packer/             pack planning, deterministic tar+xz+slice+sha build
 internal/extract/            needed-blob planning, slice-chained streaming with early abort
                              and Range resume, atomic apply
 internal/syncer/             the upload/download phase machines, classify, gc, compact, lease,
-                             the resident-writer registry
+                             run, the resident-writer registry
 internal/watcher/            watch's debounce/coalesce state machine and OS filesystem watch
                              management; a trigger is a hint, the re-scan is the truth
 internal/progress/           Reporter interface; tty / json / quiet renderers
@@ -553,8 +618,8 @@ Shared flags: `--catalog-id` (`DR_SYNC_CATALOG_ID`), `--endpoint` (`DATAROBOT_EN
 `--config` (`DATAROBOT_CONFIG`, default `~/.config/datarobot/drconfig.yaml`),
 `--meta-prefix` (`.dr-sync/`), `--check auto|full|size|mtime`, `--exclude`/`--include`/
 `--exclude-from` (gitignore-style, matched on the relative POSIX path), `--jobs`,
-`--timeout`, `--retries`, `-v/--verbose`, `-q/--quiet`, `--output text|json`, `--no-color`,
-`--dry-run`, `--yes`. The token comes from `DATAROBOT_API_TOKEN` or the config file only —
+`--timeout`, `--retries`, `--no-presign` (`DR_SYNC_NO_PRESIGN`), `-v/--verbose`, `-q/--quiet`,
+`--output text|json`, `--no-color`, `--dry-run`, `--yes`. The token comes from `DATAROBOT_API_TOKEN` or the config file only —
 no flag, so it stays out of `ps` and shell history. `--insecure-skip-verify` / `--ca-cert`
 mirror the `dr` global flags (also arriving as `DATAROBOT_CLI_*` env vars).
 
@@ -562,23 +627,29 @@ Upload adds `--delete`, `--level 0|1|3|6|9` (6), `--pack-size`, `--pack-input-ma
 `--big-file-threshold`, `--slice-size`, `--max-stage-bytes`, `--max-stage-files`,
 `--compress-jobs`, `--upload-jobs`, `--tmpdir`, `--max-scratch`, `--keep-generations`,
 `--gc-grace`, `--no-gc`, `--auto-compact`, `--compact-threshold`, `--no-lock`, `--force`,
-`--follow-symlinks`, `--overwrite error|replace`.
+`--expect-head <manifest id>` (`upload` and `status` only), `--follow-symlinks`,
+`--overwrite error|replace`.
 
-Download adds `--delete`, `--delete-excluded`, `--prefix` (repeatable),
+Download adds `--delete`, `--delete-excluded`, `--backup`, `--prefix` (repeatable),
 `--generation`/`--manifest` (pull a retained older generation), `--parallel`,
 `--link-duration`, `--no-local-reuse`, `--preserve-special-modes`, `--allow-unsafe-links`,
 `--tmpdir` (must share the filesystem with root).
 
+Run shares the upload flags except `--expect-head` and `--compact`, with `--delete` on by
+default like watch. `--timeout` bounds each transfer, not the command.
+
 Watch shares every upload flag — including `--timeout`, which bounds one cycle, not the
 daemon — but registers `--delete` with a default of `true` rather than `upload`'s `false`.
+The one exception is `--expect-head`: watch rejects it, because it pushes every cycle and one
+expected head fits only the first.
 It adds `--debounce` (2s), `--min-interval` (15s), `--poll-interval` (60s; `0` disables it),
 `--poll-only` (skip the OS watcher entirely), `--gc-interval` (10m; `0` disables it), and
 `--writer-ttl` (5m, how long its writers-registry entry is honoured).
 
 **Exit codes:** 0 success (including nothing to do) · 1 internal · 2 usage/config/precondition
-· 3 API or auth failure · 4 conflict (foreign lease, generation moved, fork) · 5 integrity
-(SHA mismatch, missing pack, unsupported `formatVersion`) · 6 partial success · 130
-interrupted (lease released, scratch cleaned).
+· 3 API or auth failure · 4 conflict (foreign lease, generation moved, `--expect-head` mismatch, fork) · 5 integrity
+(SHA mismatch, missing pack, unsupported `formatVersion`) · 6 partial success · 7 the command under
+`run` failed (the push still happened) · 130 interrupted (lease released, scratch cleaned).
 
 `--output json` emits one JSON object per line on stdout with human text on stderr, so it
 composes in CI. Human progress is per-phase — `remote` / `scan` / `plan` / `pack` / `upload`

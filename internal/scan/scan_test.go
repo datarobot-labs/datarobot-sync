@@ -165,6 +165,49 @@ func TestWalkExcludesReservedDirectoriesAtRootOnly(t *testing.T) {
 	}
 }
 
+// On a filesystem that ignores case, the backup or scratch directory can exist under any
+// spelling, and its contents are never part of the tree.
+func TestWalkExcludesTheBackupAndScratchDirectoriesInAnyCase(t *testing.T) {
+	t.Parallel()
+
+	root := tree(t, map[string]string{
+		".DR-SYNC-BACKUP/20260101T000000.000000Z/a.txt": "saved edit",
+		".Dr-Sync-Tmp/pending.part":                     "scratch",
+		"vendor/.dr-sync-backup/keep.txt":               "a user's own directory that happens to share the name",
+		"real.txt":                                      "content",
+	})
+
+	result := walk(t, Options{Root: root, MetaPrefix: manifest.DefaultMetaPrefix})
+
+	paths := make([]string, 0, len(result.ByPath))
+	for path := range result.ByPath {
+		paths = append(paths, path)
+	}
+
+	assert.ElementsMatch(t,
+		[]string{"real.txt", "vendor", "vendor/.dr-sync-backup", "vendor/.dr-sync-backup/keep.txt"}, paths)
+}
+
+func TestIsScratchPath(t *testing.T) {
+	t.Parallel()
+
+	for path, want := range map[string]bool{
+		".dr-sync-backup":                 true,
+		".dr-sync-backup/20260101/a.txt":  true,
+		".DR-SYNC-BACKUP/x.txt":           true,
+		".dr-sync-tmp":                    true,
+		".Dr-Sync-Tmp/pending.part":       true,
+		"vendor/.dr-sync-backup/keep.txt": false,
+		".dr-sync-backups/x.txt":          false,
+		".dr-sync-backup.txt":             false,
+		".dr-sync/manifests/x.json.xz":    false,
+		"real.txt":                        false,
+		"":                                false,
+	} {
+		assert.Equal(t, want, IsScratchPath(path), path)
+	}
+}
+
 func TestWalkAppliesIgnorePatterns(t *testing.T) {
 	t.Parallel()
 
