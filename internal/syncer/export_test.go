@@ -23,3 +23,5 @@ import (
 func ResolveCommitError(ctx context.Context, store *Store, commitErr error, expectedHeadID string, next *manifest.Manifest) error {
 	return store.resolveCommitError(ctx, commitErr, expectedHeadID, next)
 }
+
+var IsNotEmpty = isNotEmpty

@@ -548,7 +548,8 @@ func isGone(err error) bool {
 
 // isNotEmpty reports whether a removal failed because the directory still has contents.
 func isNotEmpty(err error) bool {
-	return errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST)
+	// os.ErrExist covers ENOTEMPTY and EEXIST on Unix and ERROR_DIR_NOT_EMPTY on Windows.
+	return errors.Is(err, os.ErrExist)
 }
 
 func (r *downloadRun) parallel() int {
