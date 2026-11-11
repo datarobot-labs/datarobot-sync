@@ -258,6 +258,40 @@ func TestOnlyTheSecondInterruptCancelsThePush(t *testing.T) {
 		"the second interrupt must cancel the push")
 }
 
+// `dr` cancels its own context on Ctrl-C and sends the plugin SIGTERM, while the terminal sends
+// SIGINT to the whole process group. One Ctrl-C then reaches the run as both signals, in either
+// order, and must not count as two interrupts.
+func TestOneInterruptThatArrivesAsSigintAndSigtermDoesNotCancelThePush(t *testing.T) {
+	t.Parallel()
+
+	orders := map[string][]os.Signal{
+		"sigint then sigterm": {os.Interrupt, syscall.SIGTERM},
+		"sigterm then sigint": {syscall.SIGTERM, os.Interrupt},
+		"sigterm twice":       {syscall.SIGTERM, syscall.SIGTERM},
+	}
+
+	for name, sent := range orders {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			signals := make(chan os.Signal, 2)
+			second, stop := secondInterrupt(signals)
+
+			defer stop()
+
+			pushCtx, cancel := pushUntil(second)(context.Background())
+			defer cancel()
+
+			for _, sig := range sent {
+				signals <- sig
+			}
+
+			assert.Never(t, func() bool { return pushCtx.Err() != nil }, 150*time.Millisecond, 10*time.Millisecond,
+				"only two SIGINTs may cancel the push")
+		})
+	}
+}
+
 // An interrupt that arrived during the pull and another during the command already count.
 func TestAPushStartedAfterTwoInterruptsIsCanceledAtOnce(t *testing.T) {
 	t.Parallel()
