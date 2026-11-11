@@ -2,7 +2,8 @@ name: Windows plugin smoke
 
 on:
   push:
-    branches: [andriykislitsyn/LAB-143-windows-plugin-smoke]
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -113,6 +114,10 @@ jobs:
           $request = [regex]::Escape("files/$id/allFiles")
           if ($direct -notmatch $request) { throw 'the direct run never reached the request' }
           if ($viaDr -notmatch $request) { throw 'the catalog ID did not reach the request through dr' }
+
+          # The step would otherwise exit with the failing upload's code, since pwsh reports the
+          # last native command's $LASTEXITCODE.
+          exit 0
 
   go-test-windows:
     runs-on: windows-latest
