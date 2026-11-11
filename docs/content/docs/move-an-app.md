@@ -85,7 +85,7 @@ If the install has no internet, bring in three files first:
    git bundle create repo.bundle --all
    ```
 
-3. Put the three files in one folder and upload the folder to the target install, so they form one Files item, and copy the item's ID. The files keep their plain names inside the item. Uploading the files one at a time creates one item per file, and the download step below then needs one ID per file.
+3. Put the three files in one folder. In the target install, go to **Registry** > **Files**, select **+**, and upload the folder, so the files form one Files item. Copy the item's ID. The files keep their plain names inside the item. Uploading the files one at a time creates one item per file, and the download step below then needs one ID per file.
 4. In the Codespace terminal:
 
    ```sh
