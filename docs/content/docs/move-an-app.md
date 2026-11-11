@@ -236,7 +236,7 @@ The app build runs `pip install`, and it fails when the install reaches no packa
 
 4. Remove `requirements.txt` from the app source, so the build skips `pip install`.
 
-If the install has a package mirror, `requirements.txt` can work as it is. Try it with a throwaway app first.
+If the install has a package mirror, try `requirements.txt` with a throwaway app first. On a mirror that uses a private certificate authority, the build can stop within a minute with `CERTIFICATE_VERIFY_FAILED` on the package index, because the build does not trust that authority. In that case, vendor the packages as above, or ask the install's administrator to trust the authority for builds.
 
 ## Workloads
 
