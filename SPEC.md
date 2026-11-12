@@ -471,6 +471,129 @@ Not provided: `lock` and `unlock`. A lease needs a process that renews it, so on
 outlives its command would lapse after the TTL, and `run <path> -- $SHELL` covers a manual
 session.
 
+### Repo
+
+**Status: specified, not built yet.** Entries marked *planned* elsewhere in this document
+belong to it.
+
+`dr-sync repo` moves a Git repository between machines that share no Git host: a customer with
+no versioning system, or a Codespace that cannot reach the team's host. The container holds one
+bare Git repository, the **mirror**, as its sync root, and nothing else. One container is one
+repository.
+
+```
+laptop checkout ──git push──▶ mirror ──upload──▶ container ──download──▶ mirror ──git fetch──▶ Codespace checkout
+```
+
+Why a bare mirror:
+
+- Git objects are immutable files named by their hash, the same model as packs. A push adds
+  object files and rewrites a few ref files, so the upload sends only the new objects.
+- `run` already is the guarded unit a push needs: lease, pull, command, push with the head
+  check. `repo push` is `run` with `git push` as the command. No new object layout, no
+  manifest change, `formatVersion` stays 1.
+- A download reproduces one generation, so a reader always gets the mirror exactly as one
+  push left it.
+
+Rejected:
+
+- *`git bundle` files.* A full bundle is re-sent whole on every push. An incremental one needs
+  the last shared commit remembered between runs, which is local state (invariant 7), and the
+  receiver fails when it lacks that commit.
+- *A Git remote helper* (`git-remote-dr-sync`), so that plain `git push` works. It needs a
+  second executable on `PATH` and a protocol implementation. Revisit when the field asks.
+- *Syncing a checkout's `.git` directory.* It holds the index, locks and per-machine config,
+  and two checkouts would overwrite each other's `HEAD`.
+
+**The mirror on disk.** `<git-common-dir>/dr-sync/<catalog-id>.git`, where `<git-common-dir>`
+is what `git rev-parse --git-common-dir` prints, so linked worktrees share it and `git status`
+never shows it. It is scratch (invariant 7): every command pulls the head into it first, with
+`Delete` forced on, and removing it costs one download. Local reuse makes that pull fetch only
+the objects the mirror lacks.
+
+**The mirror's content.** dr-sync creates it when the pull leaves the directory empty:
+`git init --bare --template= --initial-branch=<current branch>`, then it writes `config`
+itself. The empty template stores no sample hooks. The config is fixed text, one variant per
+object format, and holds only the format version, `bare = true` and `receive.autoGc = false`.
+Auto GC is off because `git receive-pack` can start it detached, and it would rewrite pack
+files while the upload scans them.
+
+**Trust.** Git runs hooks and reads config from the repository it pushes into, so a writer to
+the container could run code on every machine that pulls. Git also has several ways to look
+for them somewhere else: a `commondir` file, a nested `.git`, a `hooks` symlink. So dr-sync
+lists what a mirror may hold, not what it may not. After each pull and before any Git command,
+it refuses a mirror that is not empty (exit 5) unless all of these hold:
+
+- The top level holds `HEAD` and `config`, and besides them only `packed-refs`, `objects/`,
+  `refs/` and `info/`. `info/` holds only `refs`, which `git gc` writes. The reserved
+  `.dr-sync-tmp/` and `.dr-sync-backup/` are not part of the mirror and are skipped.
+- File names below `objects/` and `refs/` are not checked, apart from the two named in the
+  last rule. What `git gc` and `git maintenance` write there, such as
+  `objects/info/commit-graph` and `objects/pack/multi-pack-index`, passes.
+- Every entry, at any depth, is a regular file or a directory. A symlink is refused.
+- `config` equals, byte for byte, the text dr-sync writes.
+- `objects/info/` holds no `alternates` and no `http-alternates` file. Either would make Git
+  read objects from outside the mirror.
+
+**`dr-sync repo push [<path>] [-- <git push arguments>]`** sends commits to the container.
+`<path>` is any directory inside a checkout and defaults to the current one.
+
+1. Lease and pull, as in `run`. No backup is kept: every file in the mirror came from the
+   container or from this checkout.
+2. Create the mirror if the container held none. Run `git push --porcelain <mirror> HEAD`.
+   Arguments after `--` replace `HEAD`, for example `--all` or `--tags`. Nothing is forced
+   unless the caller passes it.
+3. Upload the mirror with `ExpectHead`, as in `run`. This step runs only when Git succeeded.
+
+When Git fails, the mirror stays as pulled and nothing is uploaded, unlike `run`, which pushes
+after a failed command. The exit code depends on why:
+
+- Git reports a ref as `[rejected]`, because the mirror has commits the checkout lacks. This
+  is the same conflict as a moved head, one step earlier, so it exits 4 with a hint to run
+  `repo pull` first.
+- Any other Git failure, such as a ref that does not exist, exits 7.
+
+A shallow checkout (`git clone --depth`) is one such failure when the mirror lacks the commits
+the checkout is missing: Git answers `shallow update not allowed`. The fixed config leaves
+`receive.shallowUpdate` unset, so Git never writes a top-level `shallow` file and the mirror
+always holds full history. The hint is to run `git fetch --unshallow` first. A shallow
+checkout pushes normally once the mirror has those commits.
+
+A foreign lease or a moved head also exits 4. The commits stay in the checkout and a re-run
+sends them.
+
+**`dr-sync repo clone <dir>`** creates a checkout on a machine that has none. `<dir>` must be
+absent or empty. It downloads the head into a temporary directory beside `<dir>`, runs
+`git clone --origin dr-sync`, and moves the mirror to its place inside the new `.git`. An
+empty container has no repository yet, which is exit 2, and nothing is left behind.
+
+**`dr-sync repo pull [<path>]`** brings the container's commits into a checkout. It takes no
+lease, because it writes nothing to the container. It downloads the head into the mirror, runs
+`git fetch` into `refs/remotes/dr-sync/*`, and merges `dr-sync/<current branch>`. It merges
+and never rebases, so it never rewrites a commit another machine holds. A conflict or a dirty
+tree stops the merge as Git does and exits 7, because the container is not involved, and the
+fetched commits stay under `refs/remotes/dr-sync/`. On a detached `HEAD`, or a branch the
+container lacks, it fetches only and says so.
+
+Every command sets a remote named `dr-sync` whose URL is the mirror path, so `git status`
+shows ahead and behind counts. It is a convenience. The commands pass the mirror path
+themselves and rewrite the URL when the checkout moved.
+
+Refused as usage errors (exit 2): `git` missing from `PATH`, a `<path>` outside a checkout,
+`repo push` on a detached `HEAD` with no arguments, `--delete=false`, `--dry-run`,
+`--output json`, and `--exclude`, `--include`, `--exclude-from` and `--prefix`, because a
+partial mirror is a broken repository.
+
+Not provided:
+
+- *Repacking.* Loose objects accumulate. `dr-sync run <mirror> -- git -C <mirror> gc` repacks
+  under the lease, and `compact` then reclaims the dead bytes.
+- *Git LFS objects and submodules.* LFS content lives outside the object store. A submodule is
+  its own repository and takes its own container.
+- *Shallow or partial history.* The mirror holds the full history of every pushed branch, and
+  a mirror with a `shallow` file fails the trust check.
+- *Two `repo` commands at once in one checkout.* They share one mirror directory.
+
 ### Garbage and compaction
 
 Per pack, `liveBytes` = Σ sizes of members still referenced; `liveRatio` = that over
@@ -568,6 +691,7 @@ internal/extract/            needed-blob planning, slice-chained streaming with 
                              and Range resume, atomic apply
 internal/syncer/             the upload/download phase machines, classify, gc, compact, lease,
                              run, the resident-writer registry
+internal/gitmirror/          planned: repo's mirror path, creation and checks, git invocation
 internal/watcher/            watch's debounce/coalesce state machine and OS filesystem watch
                              management; a trigger is a hint, the re-scan is the truth
 internal/progress/           Reporter interface; tty / json / quiet renderers
@@ -609,6 +733,9 @@ dr-sync ls                   [--prefix P] [--long] [--generation N]      manifes
 dr-sync inspect              [--packs]    generations, liveness, dead bytes, leases
 dr-sync compact  <path>      tier-2, local-tree-driven
 dr-sync gc                   tier-1 only
+dr-sync repo push  [<path>]  planned: send a checkout's commits to the container's Git mirror
+dr-sync repo clone <dir>     planned: create a checkout from the mirror
+dr-sync repo pull  [<path>]  planned: fetch the mirror and merge the current branch
 dr-sync completion <shell>   contributed by cobra
 dr-sync version
 dr-sync --dr-plugin-manifest works with no env and no network
@@ -646,10 +773,15 @@ It adds `--debounce` (2s), `--min-interval` (15s), `--poll-interval` (60s; `0` d
 `--poll-only` (skip the OS watcher entirely), `--gc-interval` (10m; `0` disables it), and
 `--writer-ttl` (5m, how long its writers-registry entry is honoured).
 
+Repo (*planned*): `repo push` shares the run flags, and `repo clone` and `repo pull` share the
+download flags, each without the ones the Repo section refuses.
+
 **Exit codes:** 0 success (including nothing to do) · 1 internal · 2 usage/config/precondition
-· 3 API or auth failure · 4 conflict (foreign lease, generation moved, `--expect-head` mismatch, fork) · 5 integrity
-(SHA mismatch, missing pack, unsupported `formatVersion`) · 6 partial success · 7 the command under
-`run` failed (the push still happened) · 130 interrupted (lease released, scratch cleaned).
+· 3 API or auth failure · 4 conflict (foreign lease, generation moved, `--expect-head` mismatch, fork,
+a `repo push` that Git rejects) · 5 integrity (SHA mismatch, missing pack, unsupported
+`formatVersion`, a `repo` mirror that fails the trust check) · 6 partial success · 7 the command
+under `run` failed (the push still happened), or Git under `repo` failed for another reason
+(nothing was uploaded) · 130 interrupted (lease released, scratch cleaned).
 
 `--output json` emits one JSON object per line on stdout with human text on stderr, so it
 composes in CI. Human progress is per-phase — `remote` / `scan` / `plan` / `pack` / `upload`
@@ -733,3 +865,13 @@ with goreleaser OSS v2 (2.15.4 locally supports it).
    need a regression guard.
 5. **Release.** `goreleaser check` inside `task lint`; `goreleaser release --snapshot --clean`
    locally to prove the multi-arch Docker build before tagging.
+6. **Repo** (*planned*). Against real temporary repositories: push from one checkout, clone
+   into a second, commit there, push, and pull into the first. A push that is not a
+   fast-forward exits 4 and uploads nothing, and a push of a missing ref exits 7. Two
+   concurrent pushes: one exits 4. Each of these mirrors is refused before Git runs: a hook
+   file, an edited `config`, a `commondir` file, a nested `.git`, a `hooks` symlink, an
+   `alternates` file, a `shallow` file. A mirror after `git gc` and `git maintenance run`
+   passes, with `commit-graph` and `multi-pack-index` present. A push from a `--depth 1`
+   clone into an empty mirror exits 7 and writes no `shallow` file, and the same push into a
+   mirror that has the history succeeds. The Windows smoke test covers a pull that removes
+   read-only object files.
