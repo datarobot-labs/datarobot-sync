@@ -527,6 +527,9 @@ it refuses a mirror that is not empty (exit 5) unless all of these hold:
 - The top level holds `HEAD` and `config`, and besides them only `packed-refs`, `objects/`,
   `refs/` and `info/`. `info/` holds only `refs`, which `git gc` writes. The reserved
   `.dr-sync-tmp/` and `.dr-sync-backup/` are not part of the mirror and are skipped.
+- File names below `objects/` and `refs/` are not checked, apart from the two named in the
+  last rule. What `git gc` and `git maintenance` write there, such as
+  `objects/info/commit-graph` and `objects/pack/multi-pack-index`, passes.
 - Every entry, at any depth, is a regular file or a directory. A symlink is refused.
 - `config` equals, byte for byte, the text dr-sync writes.
 - `objects/info/` holds no `alternates` and no `http-alternates` file. Either would make Git
@@ -550,6 +553,12 @@ after a failed command. The exit code depends on why:
   `repo pull` first.
 - Any other Git failure, such as a ref that does not exist, exits 7.
 
+A shallow checkout (`git clone --depth`) is one such failure when the mirror lacks the commits
+the checkout is missing: Git answers `shallow update not allowed`. The fixed config leaves
+`receive.shallowUpdate` unset, so Git never writes a top-level `shallow` file and the mirror
+always holds full history. The hint is to run `git fetch --unshallow` first. A shallow
+checkout pushes normally once the mirror has those commits.
+
 A foreign lease or a moved head also exits 4. The commits stay in the checkout and a re-run
 sends them.
 
@@ -563,8 +572,8 @@ lease, because it writes nothing to the container. It downloads the head into th
 `git fetch` into `refs/remotes/dr-sync/*`, and merges `dr-sync/<current branch>`. It merges
 and never rebases, so it never rewrites a commit another machine holds. A conflict or a dirty
 tree stops the merge as Git does and exits 7, because the container is not involved, and the
-fetched commits stay under `refs/remotes/dr-sync/`. On a detached `HEAD`, or a branch the container lacks, it fetches
-only and says so.
+fetched commits stay under `refs/remotes/dr-sync/`. On a detached `HEAD`, or a branch the
+container lacks, it fetches only and says so.
 
 Every command sets a remote named `dr-sync` whose URL is the mirror path, so `git status`
 shows ahead and behind counts. It is a convenience. The commands pass the mirror path
@@ -581,7 +590,8 @@ Not provided:
   under the lease, and `compact` then reclaims the dead bytes.
 - *Git LFS objects and submodules.* LFS content lives outside the object store. A submodule is
   its own repository and takes its own container.
-- *Shallow or partial history.* The mirror holds the full history of every pushed branch.
+- *Shallow or partial history.* The mirror holds the full history of every pushed branch, and
+  a mirror with a `shallow` file fails the trust check.
 - *Two `repo` commands at once in one checkout.* They share one mirror directory.
 
 ### Garbage and compaction
@@ -860,5 +870,8 @@ with goreleaser OSS v2 (2.15.4 locally supports it).
    fast-forward exits 4 and uploads nothing, and a push of a missing ref exits 7. Two
    concurrent pushes: one exits 4. Each of these mirrors is refused before Git runs: a hook
    file, an edited `config`, a `commondir` file, a nested `.git`, a `hooks` symlink, an
-   `alternates` file. A mirror after `git gc` passes. The Windows smoke test covers a pull
-   that removes read-only object files.
+   `alternates` file, a `shallow` file. A mirror after `git gc` and `git maintenance run`
+   passes, with `commit-graph` and `multi-pack-index` present. A push from a `--depth 1`
+   clone into an empty mirror exits 7 and writes no `shallow` file, and the same push into a
+   mirror that has the history succeeds. The Windows smoke test covers a pull that removes
+   read-only object files.
