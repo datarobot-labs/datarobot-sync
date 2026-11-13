@@ -513,10 +513,12 @@ the objects the mirror lacks.
 
 **Git's environment.** Every Git command names its repository itself, so it runs without the
 variables an enclosing Git process, such as a hook, exports to name its own: `GIT_DIR`,
-`GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY` and
+`GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY` and
 `GIT_ALTERNATE_OBJECT_DIRECTORIES`. Each would point the command at another repository or put
-the mirror's objects outside the mirror. `GIT_REFERENCE_BACKEND` is dropped too: it forces a
-ref format on a repository that has another.
+the mirror's objects outside the mirror. Two more are dropped: `GIT_REFERENCE_BACKEND` forces a
+ref format on a repository that has another, and `GIT_NAMESPACE` makes a push store its refs
+under `refs/namespaces/`, where a clone does not find them. The names match in any letter
+case, because Windows reads them that way.
 
 **The mirror's content.** dr-sync creates it when the pull leaves the directory empty:
 `git init --bare --template= --initial-branch=<current branch>`, with the checkout's

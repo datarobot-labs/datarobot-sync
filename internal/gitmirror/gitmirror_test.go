@@ -17,33 +17,16 @@ package gitmirror
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
-	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// TestMain lets the test binary stand in for git, so a test can choose the status that
-// symbolic-ref exits with. No real repository gives a status other than 0 or 1 on demand.
-func TestMain(m *testing.M) {
-	status, err := strconv.Atoi(os.Getenv("FAKE_SYMBOLIC_REF_STATUS"))
-	if err != nil {
-		os.Exit(m.Run())
-	}
-
-	if slices.Contains(os.Args, "rev-parse") {
-		fmt.Print("true\n/repo/.git\nsha1\n")
-		os.Exit(0)
-	}
-
-	fmt.Fprintln(os.Stderr, "fatal: unable to read HEAD")
-	os.Exit(status)
-}
 
 // newGit returns a Git that ignores the machine's own configuration and identity.
 func newGit(t *testing.T) *Git {
@@ -102,6 +85,8 @@ func TestCheckoutIsSharedBySubdirectoriesAndLinkedWorktrees(t *testing.T) {
 	dir := checkout(t, git, SHA1)
 	linked := filepath.Join(t.TempDir(), "linked")
 	run(t, git, "-C", dir, "worktree", "add", "--quiet", "--detach", linked)
+	// The branch now shares its name with a tag, which must not change how it is reported.
+	run(t, git, "-C", dir, "tag", "main")
 
 	fromSubdir, err := git.Checkout(context.Background(), filepath.Join(dir, "sub", "deep"))
 	require.NoError(t, err)
@@ -138,20 +123,28 @@ func TestCheckoutIgnoresRepositoryEnvironment(t *testing.T) {
 	assert.Equal(t, before, after)
 }
 
-func TestCheckoutTakesOnlyStatusOneAsDetached(t *testing.T) {
-	git := &Git{bin: os.Args[0]}
+func TestCheckoutKeepsANewlineInThePath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a Windows path cannot hold a newline")
+	}
 
-	t.Setenv("FAKE_SYMBOLIC_REF_STATUS", "1")
+	git := newGit(t)
+	dir := filepath.Join(t.TempDir(), "two\nlines")
+	run(t, git, "init", "--quiet", "--object-format="+SHA1, dir)
 
-	detached, err := git.Checkout(context.Background(), t.TempDir())
+	found, err := git.Checkout(context.Background(), dir)
 	require.NoError(t, err)
-	assert.Empty(t, detached.Branch)
+	assert.DirExists(t, found.CommonDir)
+	assert.Equal(t, SHA1, found.ObjectFormat)
+}
 
-	t.Setenv("FAKE_SYMBOLIC_REF_STATUS", "128")
+func TestCommandDropsInheritedVariablesInAnyCase(t *testing.T) {
+	t.Setenv("Git_Index_File", "elsewhere")
 
-	_, err = git.Checkout(context.Background(), t.TempDir())
-	require.ErrorContains(t, err, "unable to read HEAD")
-	require.NotErrorIs(t, err, ErrNotCheckout)
+	env := newGit(t).command(context.Background()).Env
+	assert.False(t, slices.ContainsFunc(env, func(variable string) bool {
+		return strings.HasPrefix(strings.ToUpper(variable), "GIT_INDEX_FILE=")
+	}))
 }
 
 func TestCheckoutOutsideAWorkingTreeIsAUsageError(t *testing.T) {
@@ -174,8 +167,9 @@ func TestCreateMakesAMirrorThatTakesAPush(t *testing.T) {
 	for _, objectFormat := range []string{SHA1, SHA256} {
 		t.Run(objectFormat, func(t *testing.T) {
 			git := newGit(t)
-			// A reftable default from any source must still give a files mirror, and the
-			// objects must not follow GIT_OBJECT_DIRECTORY out of it.
+			// A reftable default from any source must still give a files mirror, the objects
+			// must not follow GIT_OBJECT_DIRECTORY out of it, and the pushed branch must not
+			// land under refs/namespaces/.
 			outside := t.TempDir()
 			t.Setenv("GIT_CONFIG_COUNT", "1")
 			t.Setenv("GIT_CONFIG_KEY_0", "init.defaultRefFormat")
@@ -183,6 +177,7 @@ func TestCreateMakesAMirrorThatTakesAPush(t *testing.T) {
 			t.Setenv("GIT_DEFAULT_REF_FORMAT", "reftable")
 			t.Setenv("GIT_REFERENCE_BACKEND", "reftable")
 			t.Setenv("GIT_OBJECT_DIRECTORY", outside)
+			t.Setenv("GIT_NAMESPACE", "elsewhere")
 
 			dir := checkout(t, git, objectFormat)
 			mirror := filepath.Join(t.TempDir(), "mirror.git")

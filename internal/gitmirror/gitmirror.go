@@ -92,14 +92,18 @@ func (g *Git) Checkout(ctx context.Context, path string) (Checkout, error) {
 		return Checkout{}, fmt.Errorf("%w: %s", ErrNotCheckout, path)
 	}
 
-	// With --quiet, symbolic-ref exits 1 and prints nothing on a detached HEAD, and it still
-	// names a branch that has no commit yet. Any other failure is a real one.
-	branch, err := g.query(ctx, "-C", path, "symbolic-ref", "--short", "--quiet", "HEAD")
-	if err != nil && (!errors.As(err, &exit) || exit.ExitCode() != 1) {
+	// It prints nothing on a detached HEAD and still names a branch that has no commit yet.
+	// `symbolic-ref --short` would say heads/main where a tag is also called main.
+	branch, err := g.query(ctx, "-C", path, "branch", "--show-current")
+	if err != nil {
 		return Checkout{}, fmt.Errorf("reading HEAD in %s: %w", path, err)
 	}
 
-	return Checkout{CommonDir: filepath.FromSlash(lines[1]), Branch: branch, ObjectFormat: lines[2]}, nil
+	// A path may hold a newline, so the directory is every line between the first and the last.
+	last := len(lines) - 1
+	commonDir := filepath.FromSlash(strings.Join(lines[1:last], "\n"))
+
+	return Checkout{CommonDir: commonDir, Branch: branch, ObjectFormat: lines[last]}, nil
 }
 
 // MirrorPath is where the mirror of the container catalogID lives. It is inside the Git
@@ -155,9 +159,10 @@ func (g *Git) query(ctx context.Context, args ...string) (string, error) {
 // repository. Every command here names its repository itself, so these would point it at
 // another one or put the mirror's objects outside the mirror. GIT_REFERENCE_BACKEND forces
 // a ref format on a repository that has another, and it outranks GIT_DEFAULT_REF_FORMAT.
+// GIT_NAMESPACE makes a push store its refs under refs/namespaces/.
 var inheritedEnv = []string{
-	"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
-	"GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_REFERENCE_BACKEND",
+	"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_REFERENCE_BACKEND", "GIT_NAMESPACE",
 }
 
 func (g *Git) command(ctx context.Context, args ...string) *exec.Cmd {
@@ -165,7 +170,10 @@ func (g *Git) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd.Env = slices.DeleteFunc(os.Environ(), func(variable string) bool {
 		name, _, _ := strings.Cut(variable, "=")
 
-		return slices.Contains(inheritedEnv, name)
+		// Windows reads a name in any letter case, and Git reads none of these in another one.
+		return slices.ContainsFunc(inheritedEnv, func(inherited string) bool {
+			return strings.EqualFold(inherited, name)
+		})
 	})
 
 	return cmd
