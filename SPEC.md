@@ -511,10 +511,21 @@ never shows it. It is scratch (invariant 7): every command pulls the head into i
 `Delete` forced on, and removing it costs one download. Local reuse makes that pull fetch only
 the objects the mirror lacks.
 
+**Git's environment.** Every Git command names its repository itself, so it runs without the
+variables an enclosing Git process, such as a hook, exports to name its own: `GIT_DIR`,
+`GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY` and
+`GIT_ALTERNATE_OBJECT_DIRECTORIES`. Each would point the command at another repository or put
+the mirror's objects outside the mirror. `GIT_REFERENCE_BACKEND` is dropped too: it forces a
+ref format on a repository that has another.
+
 **The mirror's content.** dr-sync creates it when the pull leaves the directory empty:
-`git init --bare --template= --initial-branch=<current branch>`, then it writes `config`
-itself. The empty template stores no sample hooks. The config is fixed text, one variant per
-object format, and holds only the format version, `bare = true` and `receive.autoGc = false`.
+`git init --bare --template= --initial-branch=<current branch>`, with the checkout's
+`--object-format`, then it writes `config` itself. The empty template stores no sample hooks.
+The config is fixed text, one variant per object format, and holds only the format version,
+`bare = true` and `receive.autoGc = false`. It names no ref format, so `git init` runs with
+`GIT_DEFAULT_REF_FORMAT=files`: a machine that defaults to reftable would otherwise create a
+mirror the fixed config cannot open. With `GIT_REFERENCE_BACKEND` dropped, nothing outranks
+that variable.
 Auto GC is off because `git receive-pack` can start it detached, and it would rewrite pack
 files while the upload scans them.
 
@@ -691,7 +702,7 @@ internal/extract/            needed-blob planning, slice-chained streaming with 
                              and Range resume, atomic apply
 internal/syncer/             the upload/download phase machines, classify, gc, compact, lease,
                              run, the resident-writer registry
-internal/gitmirror/          planned: repo's mirror path, creation and checks, git invocation
+internal/gitmirror/          repo's mirror path and creation, git invocation; planned: checks
 internal/watcher/            watch's debounce/coalesce state machine and OS filesystem watch
                              management; a trigger is a hint, the re-scan is the truth
 internal/progress/           Reporter interface; tty / json / quiet renderers
