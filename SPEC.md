@@ -544,7 +544,7 @@ it refuses a mirror that is not empty (exit 5) unless all of these hold:
   last rule. What `git gc` and `git maintenance` write there, such as
   `objects/info/commit-graph` and `objects/pack/multi-pack-index`, passes.
 - Every entry, at any depth, is a regular file or a directory. A symlink is refused.
-- `config` equals, byte for byte, the text dr-sync writes.
+- `config` equals, byte for byte, one of the two texts dr-sync writes.
 - `objects/info/` holds no `alternates` and no `http-alternates` file. Either would make Git
   read objects from outside the mirror.
 
@@ -704,7 +704,7 @@ internal/extract/            needed-blob planning, slice-chained streaming with 
                              and Range resume, atomic apply
 internal/syncer/             the upload/download phase machines, classify, gc, compact, lease,
                              run, the resident-writer registry
-internal/gitmirror/          repo's mirror path and creation, git invocation; planned: checks
+internal/gitmirror/          repo's mirror path, creation and trust check, git invocation
 internal/watcher/            watch's debounce/coalesce state machine and OS filesystem watch
                              management; a trigger is a hint, the re-scan is the truth
 internal/progress/           Reporter interface; tty / json / quiet renderers
