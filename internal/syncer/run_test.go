@@ -31,18 +31,24 @@ import (
 
 	"github.com/datarobot-labs/datarobot-sync/internal/manifest"
 	"github.com/datarobot-labs/datarobot-sync/internal/progress"
+	"github.com/datarobot-labs/datarobot-sync/internal/scan"
 	"github.com/datarobot-labs/datarobot-sync/internal/syncer"
 )
 
 // runIn runs command against root with the defaults of `dr-sync run`: deletes in both directions,
 // lease on.
 func (h *harness) runIn(root string, command func(ctx context.Context) error) (*syncer.RunResult, error) {
-	return syncer.Run(context.Background(), h.store, progress.Discard(), syncer.RunOptions{
+	return syncer.Run(context.Background(), h.store, progress.Discard(), runOptions(root, command))
+}
+
+// runOptions is what runIn passes, for a test that changes one of them.
+func runOptions(root string, command func(ctx context.Context) error) syncer.RunOptions {
+	return syncer.RunOptions{
 		Download: syncer.DownloadOptions{Root: root, Delete: true},
 		Upload:   syncer.UploadOptions{Root: root, Level: manifest.DefaultLevel, Delete: true},
 		Lock:     true,
 		Command:  command,
-	})
+	}
 }
 
 // pulled returns what a fresh pull of the container holds, and the directory it went to.
@@ -159,6 +165,62 @@ func TestRunPushesEvenWhenTheCommandFails(t *testing.T) {
 
 	tree, _ := h.pulled(t)
 	assert.Equal(t, "partial", tree["state.json"])
+}
+
+func TestRunSkipsThePushOfAFailedCommandWhenAsked(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.upload(t, writeTree(t, map[string]string{"a.txt": "one"}))
+
+	work := t.TempDir()
+	failure := errors.New("exit status 1")
+
+	opts := runOptions(work, func(context.Context) error {
+		writeInto(t, work, map[string]string{"state.json": "partial"})
+
+		return failure
+	})
+	opts.SkipPushOnFailure = true
+
+	result, err := syncer.Run(context.Background(), h.store, progress.Discard(), opts)
+	require.NoError(t, err)
+	require.ErrorIs(t, result.CommandErr, failure)
+	assert.Nil(t, result.Uploaded)
+
+	tree, _ := h.pulled(t)
+	assert.NotContains(t, tree, "state.json", "the container keeps its head")
+
+	// The lease was released, and a command that succeeds is still pushed.
+	opts.Command = func(context.Context) error {
+		writeInto(t, work, map[string]string{"state.json": "done"})
+
+		return nil
+	}
+
+	_, err = syncer.Run(context.Background(), h.store, progress.Discard(), opts)
+	require.NoError(t, err)
+
+	tree, _ = h.pulled(t)
+	assert.Equal(t, "done", tree["state.json"])
+}
+
+func TestRunWithNoBackupKeepsNothingThePullReplaced(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.upload(t, writeTree(t, map[string]string{"a.txt": "one"}))
+
+	work := writeTree(t, map[string]string{"a.txt": "local", "stray.txt": "local"})
+
+	opts := runOptions(work, func(context.Context) error { return nil })
+	opts.NoBackup = true
+
+	result, err := syncer.Run(context.Background(), h.store, progress.Discard(), opts)
+	require.NoError(t, err)
+	assert.Zero(t, result.Downloaded.BackedUp)
+	assert.NoDirExists(t, filepath.Join(work, scan.BackupDirName))
+	assert.Equal(t, map[string]string{"a.txt": "one"}, readTree(t, work))
 }
 
 func TestRunOnAFreshlyInitializedContainerPushesOverTheSeed(t *testing.T) {
