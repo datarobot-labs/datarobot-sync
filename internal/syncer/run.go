@@ -57,12 +57,16 @@ func IsIncompleteDownload(err error) bool {
 
 // RunOptions configures Run.
 type RunOptions struct {
-	// Download and Upload carry the root, matcher and tuning for the two transfers. Run forces
-	// Download.Backup on and Download.DryRun off, and sets Upload.ExpectHead to the pulled head.
-	// It owns the lease, so Upload.Lock, Upload.LeaseTTL, Upload.ClientID and Upload.Force are
-	// ignored.
+	// Download and Upload carry the root, matcher and tuning for the two transfers. Run sets
+	// Download.Backup from NoBackup, forces Download.DryRun off, and sets Upload.ExpectHead to
+	// the pulled head. It owns the lease, so Upload.Lock, Upload.LeaseTTL, Upload.ClientID and
+	// Upload.Force are ignored.
 	Download DownloadOptions
 	Upload   UploadOptions
+
+	// NoBackup pulls without keeping the local files the pull replaces or removes. It is for a
+	// directory that holds nothing of the user's own, such as the mirror of `repo`.
+	NoBackup bool
 
 	// Lock holds an advisory lease for the whole run, renewed while the command works. LeaseTTL
 	// and Force are as for Upload.
@@ -76,6 +80,10 @@ type RunOptions struct {
 	// Command is the work between the pull and the push. Its error is reported in the result
 	// and does not stop the push: a half-finished run's state is what the next run needs.
 	Command func(ctx context.Context) error
+
+	// SkipPushOnFailure ends the run without the push when Command fails, so the container
+	// keeps its head. It is for a command whose failure leaves nothing worth keeping.
+	SkipPushOnFailure bool
 
 	// PushContext, when set, supplies the context for the push after Command returns. The
 	// default outlives the cancellation of ctx, so an interrupt aimed at the command does not
@@ -126,6 +134,9 @@ func Run(ctx context.Context, store *Store, reporter *progress.Reporter, opts Ru
 	}
 
 	result.CommandErr = opts.Command(ctx)
+	if result.CommandErr != nil && opts.SkipPushOnFailure {
+		return result, nil
+	}
 
 	if err := pushAfterRun(ctx, store, reporter, opts, base, result); err != nil {
 		return result, fmt.Errorf("the command's changes were not pushed and remain in %s: %w",
@@ -161,7 +172,7 @@ func pullBeforeRun(ctx context.Context, store *Store, reporter *progress.Reporte
 	defer cancel()
 
 	pull := opts.Download
-	pull.Backup = true
+	pull.Backup = !opts.NoBackup
 	pull.DryRun = false
 
 	downloaded, err := Download(pullCtx, store, reporter, pull)
