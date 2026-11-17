@@ -473,8 +473,8 @@ session.
 
 ### Repo
 
-**Status: specified, not built yet.** Entries marked *planned* elsewhere in this document
-belong to it.
+**Status: `repo push` is built. `repo clone` and `repo pull` are specified, not built yet**,
+and are what the *planned* entries elsewhere in this document mean.
 
 `dr-sync repo` moves a Git repository between machines that share no Git host: a customer with
 no versioning system, or a Codespace that cannot reach the team's host. The container holds one
@@ -556,7 +556,10 @@ it refuses a mirror that is not empty (exit 5) unless all of these hold:
 
 1. Lease and pull, as in `run`. No backup is kept: every file in the mirror came from the
    container or from this checkout.
-2. Create the mirror if the container held none. Run `git push --porcelain <mirror> HEAD`.
+2. Create the mirror if the container held none, with the checkout's current branch as its
+   `HEAD`. A detached `HEAD` names no branch to start one from, so the first push to an empty
+   container has to come from a branch and is a usage error otherwise; a detached push into a
+   mirror that already exists is fine. Then run `git push --porcelain <mirror> HEAD`.
    Arguments after `--` replace `HEAD`, for example `--all` or `--tags`. Nothing is forced
    unless the caller passes it.
 3. Upload the mirror with `ExpectHead`, as in `run`. This step runs only when Git succeeded.
@@ -754,7 +757,7 @@ dr-sync ls                   [--prefix P] [--long] [--generation N]      manifes
 dr-sync inspect              [--packs]    generations, liveness, dead bytes, leases
 dr-sync compact  <path>      tier-2, local-tree-driven
 dr-sync gc                   tier-1 only
-dr-sync repo push  [<path>]  planned: send a checkout's commits to the container's Git mirror
+dr-sync repo push  [<path>]  send a checkout's commits to the container's Git mirror
 dr-sync repo clone <dir>     planned: create a checkout from the mirror
 dr-sync repo pull  [<path>]  planned: fetch the mirror and merge the current branch
 dr-sync completion <shell>   contributed by cobra
@@ -794,7 +797,7 @@ It adds `--debounce` (2s), `--min-interval` (15s), `--poll-interval` (60s; `0` d
 `--poll-only` (skip the OS watcher entirely), `--gc-interval` (10m; `0` disables it), and
 `--writer-ttl` (5m, how long its writers-registry entry is honoured).
 
-Repo (*planned*): `repo push` shares the run flags, and `repo clone` and `repo pull` share the
+Repo: `repo push` shares the run flags, and `repo clone` and `repo pull` (*planned*) share the
 download flags, each without the ones the Repo section refuses.
 
 **Exit codes:** 0 success (including nothing to do) · 1 internal · 2 usage/config/precondition
