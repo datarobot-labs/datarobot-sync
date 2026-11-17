@@ -114,13 +114,21 @@ func (c Checkout) MirrorPath(catalogID string) string {
 
 // Config is the whole config file of a mirror. The trust check compares the file with this
 // text byte for byte, so changing it is a spec change.
+//
+// Both receive settings are pinned rather than left unset, because the config of the machine
+// receiving a push would otherwise decide them: a repository's own config outranks the global
+// and system files, and nothing here can stop a user keeping either setting in ~/.gitconfig.
+// A shallow update that got through would leave a top-level shallow file, which the trust
+// check refuses, so the mirror would be unusable on every machine after it.
 func Config(objectFormat string) string {
 	if objectFormat == SHA256 {
 		return "[core]\n\trepositoryformatversion = 1\n\tbare = true\n" +
-			"[extensions]\n\tobjectformat = sha256\n[receive]\n\tautoGc = false\n"
+			"[extensions]\n\tobjectformat = sha256\n" +
+			"[receive]\n\tautoGc = false\n\tshallowUpdate = false\n"
 	}
 
-	return "[core]\n\trepositoryformatversion = 0\n\tbare = true\n[receive]\n\tautoGc = false\n"
+	return "[core]\n\trepositoryformatversion = 0\n\tbare = true\n" +
+		"[receive]\n\tautoGc = false\n\tshallowUpdate = false\n"
 }
 
 // Create makes an empty mirror whose HEAD points at branch. The caller has checked that the
