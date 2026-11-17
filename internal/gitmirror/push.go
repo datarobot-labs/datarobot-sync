@@ -92,11 +92,11 @@ func (g *Git) SetRemote(ctx context.Context, checkout, mirror string) error {
 	return nil
 }
 
-// copyStatus copies Git's porcelain status to out, which may be nil, and returns the first line
-// reporting a refused ref, empty when Git took them all. It reads to the end whatever it finds,
-// so the pipe behind status is always drained.
+// copyStatus copies Git's porcelain status to out, which may be nil, and returns the line of
+// the refused ref that says most, empty when Git took them all. It reads to the end whatever
+// it finds, so the pipe behind status is always drained.
 func copyStatus(status io.Reader, out io.Writer) string {
-	first := ""
+	worst := ""
 	lines := bufio.NewReader(status)
 
 	for {
@@ -108,19 +108,38 @@ func copyStatus(status io.Reader, out io.Writer) string {
 			fmt.Fprint(out, line)
 		}
 
-		if first == "" && strings.HasPrefix(line, refusedFlag) {
-			first = strings.TrimRight(line, "\n")
+		// One push of many refs can be refused for several reasons at once, and the ref Git
+		// names first is not always the one whose answer the user needs.
+		refused := strings.TrimRight(line, "\n")
+		if strings.HasPrefix(refused, refusedFlag) && (worst == "" || rank(refused) > rank(worst)) {
+			worst = refused
 		}
 
 		if err != nil {
-			return first
+			return worst
 		}
 	}
 }
 
-// pushFailure says why Git refused, reading the status line of the first ref it did not take.
-// A push that fails before any ref is weighed, such as one naming a ref that does not exist,
-// prints no such line and is reported as it came.
+// rank orders the refusals by what each asks of the user. A history the mirror cannot hold
+// comes first, because no pull from the container fixes it and sending the user to `repo pull`
+// would only loop. A conflict comes next, because a pull does fix that one. Every other
+// refusal is Git's own to explain.
+func rank(refused string) int {
+	switch {
+	case strings.Contains(refused, shallowSummary):
+		return 2
+
+	case strings.Contains(refused, rejectedSummary):
+		return 1
+	}
+
+	return 0
+}
+
+// pushFailure says why Git refused, reading the status line of the ref whose refusal says
+// most. A push that fails before any ref is weighed, such as one naming a ref that does not
+// exist, prints no such line and is reported as it came.
 func pushFailure(refused string, err error) error {
 	switch {
 	case strings.Contains(refused, shallowSummary):
@@ -129,6 +148,9 @@ func pushFailure(refused string, err error) error {
 
 	case strings.Contains(refused, rejectedSummary):
 		return fmt.Errorf("%w: git push refused %q", ErrRejected, refused)
+
+	case refused != "":
+		return fmt.Errorf("git push refused %q: %w", refused, err)
 	}
 
 	return fmt.Errorf("git push failed: %w", err)

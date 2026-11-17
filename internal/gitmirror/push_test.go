@@ -17,8 +17,10 @@ package gitmirror
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -102,6 +104,50 @@ func TestPushOfAShallowCheckoutSaysToUnshallowIt(t *testing.T) {
 	require.Error(t, err)
 	require.NotErrorIs(t, err, ErrRejected, "no pull from the container would fix it")
 	assert.Contains(t, err.Error(), "--unshallow")
+}
+
+func TestPushOfAShallowCheckoutIsRefusedWhereTheMachineWouldAllowIt(t *testing.T) {
+	git := newGit(t)
+	ctx := context.Background()
+
+	// A ~/.gitconfig that lets shallow pushes through, which the mirror's own config has to
+	// outrank: otherwise the push lands and leaves a shallow file the trust check then refuses,
+	// making the mirror unusable on every machine after this one.
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	require.NoError(t, os.WriteFile(global, []byte("[receive]\n\tshallowUpdate = true\n"), 0o600))
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+
+	dir, mirror := mirrored(t, git)
+	run(t, git, "-C", dir, "commit", "--quiet", "--allow-empty", "--message=second")
+
+	tip := says(t, git, "-C", dir, "rev-parse", "HEAD")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".git", "shallow"), []byte(tip+"\n"), 0o600))
+
+	require.Error(t, git.Push(ctx, dir, mirror, nil))
+	assert.NoFileExists(t, filepath.Join(mirror, "shallow"))
+}
+
+func TestCopyStatusKeepsTheRefusalThatSaysMost(t *testing.T) {
+	// Git's own wording, taken from a push it refused for each of these reasons.
+	hook := "!\trefs/heads/a:refs/heads/a\t[remote rejected] (pre-receive hook declined)\n"
+	conflict := "!\trefs/heads/b:refs/heads/b\t[rejected] (fetch first)\n"
+	shallow := "!\trefs/heads/c:refs/heads/c\t[remote rejected] (shallow update not allowed)\n"
+
+	for name, probe := range map[string]struct{ refusals, saysInTheError string }{
+		"a conflict after another refusal": {hook + conflict, "the container holds commits"},
+		"a shallow push after a conflict":  {conflict + shallow, "--unshallow"},
+		"neither":                          {hook, "pre-receive hook declined"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			status := "To /mirror\n" + probe.refusals + "Done\n"
+
+			out := &bytes.Buffer{}
+			worst := copyStatus(strings.NewReader(status), out)
+
+			assert.Equal(t, status, out.String(), "every line still reaches the caller")
+			assert.ErrorContains(t, pushFailure(worst, errors.New("exit status 1")), probe.saysInTheError)
+		})
+	}
 }
 
 func TestPushOfAMissingRefIsNotAConflict(t *testing.T) {

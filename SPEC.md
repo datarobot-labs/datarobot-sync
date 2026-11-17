@@ -524,7 +524,10 @@ case, because Windows reads them that way.
 `git init --bare --template= --initial-branch=<current branch>`, with the checkout's
 `--object-format`, then it writes `config` itself. The empty template stores no sample hooks.
 The config is fixed text, one variant per object format, and holds only the format version,
-`bare = true` and `receive.autoGc = false`. It names no ref format, so `git init` runs with
+`bare = true`, `receive.autoGc = false` and `receive.shallowUpdate = false`. Both `receive`
+settings are written rather than left unset, because the config of the machine receiving a
+push would otherwise decide them, and a repository's own config is what outranks the global
+and system files. It names no ref format, so `git init` runs with
 `GIT_DEFAULT_REF_FORMAT=files`: a machine that defaults to reftable would otherwise create a
 mirror the fixed config cannot open. With `GIT_REFERENCE_BACKEND` dropped, nothing outranks
 that variable.
@@ -567,10 +570,15 @@ after a failed command. The exit code depends on why:
 - Any other Git failure, such as a ref that does not exist, exits 7.
 
 A shallow checkout (`git clone --depth`) is one such failure when the mirror lacks the commits
-the checkout is missing: Git answers `shallow update not allowed`. The fixed config leaves
-`receive.shallowUpdate` unset, so Git never writes a top-level `shallow` file and the mirror
-always holds full history. The hint is to run `git fetch --unshallow` first. A shallow
-checkout pushes normally once the mirror has those commits.
+the checkout is missing: Git answers `shallow update not allowed`. The fixed config pins
+`receive.shallowUpdate = false`, so Git never writes a top-level `shallow` file, which the
+trust check would refuse, and the mirror always holds full history. The hint is to run
+`git fetch --unshallow` first. A shallow checkout pushes normally once the mirror has those
+commits.
+
+One push can be refused for several reasons at once, and the ref Git names first is not
+always the one to answer. A shallow history outranks a conflict, because no `repo pull` fixes
+it, and a conflict outranks every other refusal.
 
 A foreign lease or a moved head also exits 4. The commits stay in the checkout and a re-run
 sends them.
