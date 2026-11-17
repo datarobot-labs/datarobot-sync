@@ -704,7 +704,7 @@ internal/extract/            needed-blob planning, slice-chained streaming with 
                              and Range resume, atomic apply
 internal/syncer/             the upload/download phase machines, classify, gc, compact, lease,
                              run, the resident-writer registry
-internal/gitmirror/          repo's mirror path, creation and trust check, git invocation
+internal/gitmirror/          repo's mirror path, creation, trust check, push and remote
 internal/watcher/            watch's debounce/coalesce state machine and OS filesystem watch
                              management; a trigger is a hint, the re-scan is the truth
 internal/progress/           Reporter interface; tty / json / quiet renderers
