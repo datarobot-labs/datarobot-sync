@@ -4,6 +4,10 @@
 #
 # dr-sync is a static binary that talks HTTP and does its own xz — it needs nothing but a
 # recent CLI to hand it credentials.
+#
+# `dr` does not run the plugin below `minimum-version`. It is not raised for
+# `shutdownGraceSeconds`, because an older `dr` ignores that field and gives the plugin its
+# 5 second default.
 dr:
   name: DataRobot CLI
   minimum-version: 0.2.74

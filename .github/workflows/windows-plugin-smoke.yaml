@@ -36,7 +36,7 @@ jobs:
         run: |
           set -o pipefail
           curl -fsSL https://raw.githubusercontent.com/datarobot-oss/cli/d3fdb737e570a619e1f3944848f8e74adb701009/install.sh \
-            | INSTALL_DIR="$HOME/.local/bin" sh -s -- v0.12.0
+            | INSTALL_DIR="$HOME/.local/bin" sh -s -- v0.22.0
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Package the dr plugin archive
@@ -69,7 +69,7 @@ jobs:
 
       - name: Install the dr CLI
         run: |
-          $env:VERSION = 'v0.19.0'
+          $env:VERSION = 'v0.22.0'
           irm https://raw.githubusercontent.com/datarobot-oss/cli/d3fdb737e570a619e1f3944848f8e74adb701009/install.ps1 | iex
           Add-Content -Path $env:GITHUB_PATH -Value "$env:LOCALAPPDATA\Programs\dr"
 
