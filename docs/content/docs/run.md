@@ -89,6 +89,8 @@ SIGTERM goes to datarobot-sync only, which passes it to the command but not to t
 command started. Put `exec` before the last command in a shell wrapper, as in the Pulumi example,
 so the signal reaches the program that holds the state.
 
+Through `dr sync`, the plugin has 30 seconds after Ctrl-C to finish the push and release the lease. `dr` v0.21.0 and later honor that limit, and earlier versions end the plugin after 5 seconds. A push that is cut short leaves the lease held until it expires. The standalone `dr-sync` has no such limit.
+
 ## Limits
 
 - `run` takes the upload flags except `--expect-head`, which it sets itself, and `--compact`.

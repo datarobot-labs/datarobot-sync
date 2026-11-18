@@ -44,10 +44,16 @@ with open(path, encoding="utf-8") as handle:
 problems = []
 
 # The `dr` CLI rejects unknown keys outright, so an unexpected field is a hard failure.
-allowed = {"name", "version", "description", "authentication", "minCLIVersion", "scripts"}
+allowed = {"name", "version", "description", "authentication", "minCLIVersion", "shutdownGraceSeconds", "scripts"}
 for key in manifest:
     if key not in allowed:
         problems.append(f"unknown key {key!r}: the dr CLI rejects manifests with extra fields")
+
+# Outside 1 to 300 the CLI falls back to its 5 second default or caps the value, so a typo
+# silently undoes the grace.
+grace = manifest.get("shutdownGraceSeconds")
+if grace is not None and (isinstance(grace, bool) or not isinstance(grace, int) or not 1 <= grace <= 300):
+    problems.append(f"shutdownGraceSeconds {grace!r} must be an integer from 1 to 300")
 
 for key in ("name", "version", "description"):
     if not manifest.get(key):
