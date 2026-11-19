@@ -11,7 +11,7 @@ require (
 	github.com/ulikunitz/xz v0.5.17
 	golang.org/x/sync v0.25.0
 	golang.org/x/term v0.48.0
-	golang.org/x/text v0.43.0
+	golang.org/x/text v0.44.0
 )
 
 require (
