@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -357,4 +358,82 @@ func TestUploadBytesLengthIsStable(t *testing.T) {
 
 	assert.Equal(t, "{}", string(captured.content))
 	assert.Positive(t, captured.contentLength)
+}
+
+// A relative Location on a commit resolves against the fromStage URL, as HTTP does.
+func TestCommitStageResolvesARelativeLocation(t *testing.T) {
+	t.Parallel()
+
+	var polled atomic.Bool
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v2/files/abc/fromStage/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", "status/1/")
+		respond(t, w, http.StatusAccepted, `{"catalogId":"abc"}`)
+	})
+	mux.HandleFunc("/api/v2/files/abc/fromStage/status/1/", func(w http.ResponseWriter, _ *http.Request) {
+		polled.Store(true)
+		respondOK(t, w, `{"status":"COMPLETED"}`)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	_, err := newTestClient(t, srv).CommitStage(context.Background(), "abc", "stage-1", OverwriteError)
+	require.NoError(t, err)
+	assert.True(t, polled.Load())
+}
+
+// The request timeout bounds a call, not an upload: http.Client.Timeout would cut every
+// upload that takes longer, whatever uploadTimeout says.
+func TestUploadOutlivesTheRequestTimeout(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("reading upload: %v", err)
+		}
+
+		respondOK(t, w, `{}`)
+	}))
+	defer srv.Close()
+
+	client, err := New(Config{
+		Endpoint: srv.URL + "/api/v2", Token: "t", RequestTimeout: 100 * time.Millisecond, MaxRetries: 1,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, client.UploadBytesToStage(context.Background(), "abc", "s", "m.json", []byte("{}")))
+}
+
+// A commit answers in well under a second, so it gets the request timeout, not the upload's.
+func TestCommitStageUsesTheRequestTimeout(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		// The server notices the client leave only once the body is read.
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("reading commit: %v", err)
+		}
+
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	client, err := New(Config{
+		Endpoint: srv.URL + "/api/v2", Token: "t", RequestTimeout: 100 * time.Millisecond, MaxRetries: 1,
+	})
+	require.NoError(t, err)
+
+	// The test's own deadline only stops a regression from hanging the suite.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	started := time.Now()
+
+	_, err = client.CommitStage(ctx, "abc", "stage-1", OverwriteError)
+	require.Error(t, err)
+	assert.Less(t, time.Since(started), 3*time.Second)
 }

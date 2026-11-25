@@ -16,6 +16,7 @@ package drapi
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -57,7 +58,11 @@ type Client struct {
 	base      *url.URL
 	token     string
 	userAgent string
-	http      *http.Client
+	// timeout bounds every API request, from dial to the last byte of the response body. It
+	// is per request, not http.Client.Timeout, which would cut an upload at this limit
+	// whatever uploadTimeout says.
+	timeout time.Duration
+	http    *http.Client
 	// blob serves presigned URLs and API file reads. It holds no credentials: a presigned fetch
 	// must not send an Authorization header (S3 answers 400), and an API read sets its own.
 	blob       *http.Client
@@ -117,9 +122,9 @@ func New(cfg Config) (*Client, error) {
 		base:      base,
 		token:     cfg.Token,
 		userAgent: userAgent,
+		timeout:   timeout,
 		http: &http.Client{
 			Transport: transport,
-			Timeout:   timeout,
 			// A 303 from downloads/ points at S3. Following it here would carry the
 			// Authorization header cross-host; dr-sync uses links/ instead and treats any
 			// redirect as a bug worth surfacing.
@@ -227,7 +232,8 @@ type request struct {
 	// transfer encoding, which some gateways reject for large uploads.
 	contentLength int64
 	contentType   string
-	timeout       time.Duration
+	// timeout replaces the client's request timeout for this call. Zero means the client's.
+	timeout time.Duration
 	// absoluteURL bypasses path resolution, for following an absolute `next` link.
 	absoluteURL string
 	// replayable marks a POST that is safe to send twice. Every other method is already.
@@ -322,7 +328,7 @@ func (c *Client) doRaw(ctx context.Context, req request) (*http.Response, error)
 // attempt performs exactly one HTTP round trip. The returned duration is the server's
 // Retry-After, when it supplied one.
 func (c *Client) attempt(ctx context.Context, req request, target string) (*http.Response, time.Duration, error) {
-	ctx, cancel := withTimeout(ctx, req.timeout)
+	ctx, cancel := context.WithTimeout(ctx, cmp.Or(req.timeout, c.timeout))
 
 	var (
 		body io.ReadCloser
@@ -381,16 +387,6 @@ func (c *Client) attempt(ctx context.Context, req request, target string) (*http
 	}
 
 	return nil, retryAfterOf(resp), parseAPIError(req.method, req.path, resp, errBody)
-}
-
-// withTimeout applies a per-request timeout, defaulting to none when timeout is zero (the
-// client-level timeout still applies).
-func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	if timeout <= 0 {
-		return context.WithCancel(ctx)
-	}
-
-	return context.WithTimeout(ctx, timeout)
 }
 
 // cancelOnClose releases a request context when the response body is closed.

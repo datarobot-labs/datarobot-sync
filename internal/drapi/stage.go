@@ -122,7 +122,6 @@ func (c *Client) CommitStage(ctx context.Context, containerID, stageID string, o
 		body:          body,
 		contentLength: length,
 		contentType:   "application/json",
-		timeout:       uploadTimeout,
 		// A replay of a commit that landed answers 422, "the stage can't be applied twice", and
 		// callers already re-read the container after any failed commit. Replaying is what
 		// saves a commit that did not land.
@@ -145,8 +144,14 @@ func (c *Client) CommitStage(ctx context.Context, containerID, stageID string, o
 	// The synchronous path is what the API actually does today. The asynchronous one is kept
 	// because a large enough stage could plausibly switch to it, and silently treating a
 	// pending commit as finished would corrupt the packs-before-manifest ordering.
-	if location := resp.Header.Get("Location"); location != "" {
-		if err := c.PollAsync(ctx, location); err != nil {
+	if resp.Header.Get("Location") != "" {
+		// Location resolves a relative URL against the fromStage URL, as HTTP does.
+		location, err := resp.Location()
+		if err != nil {
+			return CommitResult{}, fmt.Errorf("POST files/%s/fromStage/: %w", containerID, err)
+		}
+
+		if err := c.PollAsync(ctx, location.String()); err != nil {
 			return CommitResult{}, err
 		}
 	}

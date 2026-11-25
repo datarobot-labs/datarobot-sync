@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -73,10 +72,10 @@ func (c *Client) PollAsync(ctx context.Context, statusURL string) error {
 			return nil
 		}
 
+		// A redirect waits and counts against the deadline like any other poll, so a redirect
+		// loop cannot spin.
 		if next != "" {
 			statusURL = next
-
-			continue
 		}
 
 		if waited := time.Since(started); waited > asyncDeadline {
@@ -102,6 +101,10 @@ func (c *Client) PollAsync(ctx context.Context, statusURL string) error {
 // pollOnce performs one status check. It reports whether the operation finished, and a
 // replacement URL when the server redirected the poll elsewhere.
 func (c *Client) pollOnce(ctx context.Context, statusURL string) (done bool, next string, err error) {
+	// RoundTrip has no client timeout of its own, and a hung poll would hang the run.
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statusURL, nil)
 	if err != nil {
 		return false, "", fmt.Errorf("building status request: %w", err)
@@ -125,12 +128,13 @@ func (c *Client) pollOnce(ctx context.Context, statusURL string) (done bool, nex
 		return true, "", nil
 
 	case http.StatusTemporaryRedirect:
-		location := resp.Header.Get("Location")
-		if location == "" {
-			return false, "", errors.New("async status returned 307 with no Location")
+		// Location resolves a relative URL against this poll's URL, as HTTP does.
+		location, err := resp.Location()
+		if err != nil {
+			return false, "", fmt.Errorf("async status returned 307: %w", err)
 		}
 
-		return false, location, nil
+		return false, location.String(), nil
 
 	case http.StatusOK:
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<16))

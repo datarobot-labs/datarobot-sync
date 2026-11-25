@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,21 +63,20 @@ func TestPollAsyncTreatsSeeOtherAsDone(t *testing.T) {
 	assert.EqualValues(t, 1, polls.Load(), "303 is terminal, not a hop to follow with more polls")
 }
 
+// A relative Location resolves against the poll that returned it, as HTTP does.
 func TestPollAsyncFollowsTemporaryRedirect(t *testing.T) {
 	t.Parallel()
 
-	var srv *httptest.Server
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("/first/", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Location", srv.URL+"/second/")
+		w.Header().Set("Location", "../second/")
 		w.WriteHeader(http.StatusTemporaryRedirect)
 	})
 	mux.HandleFunc("/second/", func(w http.ResponseWriter, _ *http.Request) {
 		respondOK(t, w, `{"status":"COMPLETED"}`)
 	})
 
-	srv = httptest.NewServer(mux)
+	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
 	require.NoError(t, newTestClient(t, srv).PollAsync(context.Background(), srv.URL+"/first/"))
@@ -150,4 +150,46 @@ func TestInterpretAsyncStatus(t *testing.T) {
 			assert.Equal(t, tc.done, done)
 		})
 	}
+}
+
+// A redirect loop waits between polls like any other answer, instead of spinning.
+func TestPollAsyncWaitsOnARedirectLoop(t *testing.T) {
+	t.Parallel()
+
+	var polls atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		polls.Add(1)
+		w.Header().Set("Location", r.URL.Path)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	require.ErrorIs(t, newTestClient(t, srv).PollAsync(ctx, srv.URL+"/status/"), context.DeadlineExceeded)
+	assert.LessOrEqual(t, polls.Load(), int32(5))
+}
+
+// A poll that never answers must fail at the request timeout, not hang the run.
+func TestPollAsyncBoundsEachPoll(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	client, err := New(Config{Endpoint: srv.URL + "/api/v2", Token: "t", RequestTimeout: 100 * time.Millisecond})
+	require.NoError(t, err)
+
+	// The test's own deadline only stops a regression from hanging the suite.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	started := time.Now()
+
+	require.ErrorIs(t, client.PollAsync(ctx, srv.URL+"/api/v2/status/"), context.DeadlineExceeded)
+	assert.Less(t, time.Since(started), 2*time.Second)
 }
