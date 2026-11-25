@@ -230,6 +230,13 @@ type request struct {
 	timeout       time.Duration
 	// absoluteURL bypasses path resolution, for following an absolute `next` link.
 	absoluteURL string
+	// replayable marks a POST that is safe to send twice. Every other method is already.
+	replayable bool
+}
+
+// safeToReplay reports whether sending req twice is as good as sending it once.
+func (r request) safeToReplay() bool {
+	return r.method != http.MethodPost || r.replayable
 }
 
 // jsonBody marshals v into a replayable request body.
@@ -298,7 +305,9 @@ func (c *Client) doRaw(ctx context.Context, req request) (*http.Response, error)
 			return resp, nil
 		}
 
-		if attempt >= c.maxRetries || !isRetryable(err) {
+		// The caller's own context decides whether it gave up. A deadline inside err can be
+		// one attempt's timeout, which is worth another try.
+		if ctx.Err() != nil || attempt >= c.maxRetries || !isRetryable(err, req.safeToReplay()) {
 			return nil, err
 		}
 

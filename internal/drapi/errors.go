@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 )
 
 // APIError is a non-2xx response from the DataRobot API.
@@ -161,15 +162,20 @@ func IsConflict(err error) bool {
 }
 
 // IsMissingFileName reports whether err is the API's response to naming a file that is not
-// in the container. It is how a stale manifest surfaces: a pack it references has been
-// compacted away.
+// in the container: `Filename <name> does not exist.`, a 422 from links/ and a 404 from
+// file/. It is how a stale manifest surfaces: a pack it references has been compacted away.
+// A missing container also "does not exist", and must not read as this.
 func IsMissingFileName(err error) bool {
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		return false
 	}
 
-	return strings.Contains(apiErr.Message, "does not exist")
+	if apiErr.Status != http.StatusNotFound && apiErr.Status != http.StatusUnprocessableEntity {
+		return false
+	}
+
+	return strings.HasPrefix(apiErr.Message, "Filename ") && strings.Contains(apiErr.Message, "does not exist")
 }
 
 func truncate(s string, limit int) string {
@@ -178,5 +184,11 @@ func truncate(s string, limit int) string {
 		return s
 	}
 
-	return s[:limit] + "…"
+	// Cut on a rune boundary: half a character is invalid UTF-8 on the user's terminal.
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+
+	return s[:cut] + "…"
 }

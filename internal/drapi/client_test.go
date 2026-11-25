@@ -120,7 +120,7 @@ func TestRetriesRateLimitThenSucceeds(t *testing.T) {
 			return
 		}
 
-		respondOK(t, w, `{"id":"abc","catalogType":"files"}`)
+		respondOK(t, w, `{"id":"abc","type":"files"}`)
 	}))
 	defer srv.Close()
 

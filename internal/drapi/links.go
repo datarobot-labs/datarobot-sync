@@ -58,6 +58,7 @@ func (c *Client) SignedLinks(ctx context.Context, containerID string, names []st
 		body:          body,
 		contentLength: length,
 		contentType:   "application/json",
+		replayable:    true, // it only reads
 	}, &out)
 	if err != nil {
 		return nil, err
@@ -171,7 +172,7 @@ func (c *Client) OpenFile(ctx context.Context, containerID, name string, offset 
 			return body, length, nil
 		}
 
-		if attempt >= c.maxRetries || !isRetryable(err) {
+		if ctx.Err() != nil || attempt >= c.maxRetries || !isRetryable(err, true) {
 			return nil, 0, err
 		}
 

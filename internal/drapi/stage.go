@@ -32,6 +32,8 @@ func (c *Client) CreateStage(ctx context.Context, containerID string) (Stage, er
 		method:      http.MethodPost,
 		path:        fmt.Sprintf("files/%s/stages/", url.PathEscape(containerID)),
 		contentType: "application/json",
+		// A replay may open a second stage. An unused stage is never applied, so it is harmless.
+		replayable: true,
 	}, &out)
 	if err != nil {
 		return Stage{}, err
@@ -66,6 +68,7 @@ func (c *Client) UploadToStage(ctx context.Context, containerID, stageID string,
 		contentLength: length,
 		contentType:   contentType,
 		timeout:       uploadTimeout,
+		replayable:    true,
 	}, nil)
 }
 
@@ -120,6 +123,10 @@ func (c *Client) CommitStage(ctx context.Context, containerID, stageID string, o
 		contentLength: length,
 		contentType:   "application/json",
 		timeout:       uploadTimeout,
+		// A replay of a commit that landed answers 422, "the stage can't be applied twice", and
+		// callers already re-read the container after any failed commit. Replaying is what
+		// saves a commit that did not land.
+		replayable: true,
 	}
 
 	resp, err := c.doRaw(ctx, req)

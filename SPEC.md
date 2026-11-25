@@ -94,6 +94,11 @@ Also established:
 - **A spent stage cannot be applied again.** The second `fromStage` for one stage answers
   `422 ... The stage can't be applied twice`, never `409` (verified 2026-11-10). A commit
   whose answer is lost therefore fails on retry with a `422`, even though it landed.
+- **What the client replays.** Every request is retried on 429, 413 and 503, and every request
+  but `POST files/` (create a container) also on a reset, a per-attempt timeout, a 502 or a
+  504. A create that may have landed is not sent again, because the replay makes a second
+  container. A replayed commit that landed comes back as the `422` above, which the lost-answer
+  re-read turns into success.
 - Per-file upload round-trips cost ~0.2 s each at 8-way parallelism (200 files in 43 s). This
   is the whole case for packing: 200 files in one pack is one request, not 200.
 - `allFiles/` `limit` **caps at 1000** (higher → `value is greater than 1000`); the default is

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -41,31 +42,42 @@ func (e *transportError) Unwrap() error {
 	return e.Err
 }
 
-// isRetryable reports whether err is worth another attempt.
+// isRetryable reports whether err is worth another attempt. The caller has already checked
+// that its own context is live, so a deadline in err is one attempt's timeout.
 //
-// Every request dr-sync makes is safe to replay: reads are idempotent, a stage upload
-// deduplicates a repeated name, and `fromStage` is atomic so a rejected commit changed
-// nothing. That is why uploads are in scope here and not excluded as unsafe POSTs.
-func isRetryable(err error) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
-
+// A request that is not replayable (a POST that creates something) goes again only when the
+// server cannot have acted on it: the connection was never made, or the server said so with a
+// 429, 413 or 503. After a reset, a timeout or a 502/504 it may have landed, and sending it
+// again would make a second container.
+func isRetryable(err error, replayable bool) bool {
 	var transportErr *transportError
 	if errors.As(err, &transportErr) {
-		return true
+		return replayable || neverSent(err)
 	}
 
 	switch StatusOf(err) {
 	case http.StatusTooManyRequests,
 		http.StatusRequestEntityTooLarge, // the API uses 413 for transient overload too
-		http.StatusBadGateway,
-		http.StatusServiceUnavailable,
-		http.StatusGatewayTimeout:
+		http.StatusServiceUnavailable:
 		return true
+	case http.StatusBadGateway, http.StatusGatewayTimeout:
+		return replayable
 	default:
 		return false
 	}
+}
+
+// neverSent reports whether a transport error happened before the request left this machine:
+// a failed DNS lookup or dial.
+func neverSent(err error) bool {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+
+	var opErr *net.OpError
+
+	return errors.As(err, &opErr) && opErr.Op == "dial"
 }
 
 // retryAfterOf reads the Retry-After header, honouring both the delay-seconds and HTTP-date

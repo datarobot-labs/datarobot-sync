@@ -22,7 +22,8 @@ import (
 	"net/url"
 )
 
-// CreateContainer creates an empty Files container and returns its id and first version.
+// CreateContainer creates an empty Files container and returns its id and first version. It is
+// not replayed once it may have reached the server: a second send makes a second container.
 func (c *Client) CreateContainer(ctx context.Context) (Container, error) {
 	body, length, err := jsonBody(struct{}{})
 	if err != nil {

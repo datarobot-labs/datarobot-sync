@@ -65,12 +65,14 @@ type Container struct {
 	VersionID string `json:"catalogVersionId"`
 }
 
-// ContainerDetails is the subset of `catalogItems/{id}/` dr-sync reads.
+// ContainerDetails is the subset of `catalogItems/{id}/` dr-sync reads. The single-item read
+// names these `name` and `type`; the `catalogItems/` listing calls the same things
+// `catalogName` and `catalogType`, and mapping those here decodes both as "".
 type ContainerDetails struct {
 	ID          string     `json:"id"`
-	Name        string     `json:"catalogName"`
+	Name        string     `json:"name"`
 	Description string     `json:"description"`
-	Type        string     `json:"catalogType"`
+	Type        string     `json:"type"`
 	Tags        []string   `json:"tags"`
 	NumFiles    int        `json:"numFiles"`
 	FromArchive bool       `json:"fromArchive"`
