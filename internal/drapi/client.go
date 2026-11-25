@@ -65,7 +65,9 @@ type Client struct {
 	http    *http.Client
 	// blob serves presigned URLs and API file reads. It holds no credentials: a presigned fetch
 	// must not send an Authorization header (S3 answers 400), and an API read sets its own.
-	blob       *http.Client
+	blob *http.Client
+	// stall is how long a download may go without a byte before it is abandoned.
+	stall      time.Duration
 	maxRetries int
 }
 
@@ -73,7 +75,10 @@ const (
 	defaultRequestTimeout = 120 * time.Second
 	// uploadTimeout is generous because a pack body can be tens of megabytes over a slow
 	// uplink; 256 MiB at 7 MiB/s is already 35 seconds.
-	uploadTimeout     = 30 * time.Minute
+	uploadTimeout = 30 * time.Minute
+	// stallTimeout ends a download that sends nothing for this long. Not a whole-body deadline,
+	// which would cut a large pack on a slow link.
+	stallTimeout      = time.Minute
 	defaultMaxRetries = 5
 )
 
@@ -138,6 +143,7 @@ func New(cfg Config) (*Client, error) {
 			// by a fixed wall clock, because a pack can legitimately take minutes.
 			CheckRedirect: stripAuthorizationOnRedirect,
 		},
+		stall:      stallTimeout,
 		maxRetries: maxRetries,
 	}, nil
 }
@@ -187,17 +193,49 @@ func newTransport(cfg Config) (http.RoundTripper, error) {
 	return transport, nil
 }
 
-// stripAuthorizationOnRedirect removes credentials when a presigned URL redirects. Go
-// already drops the header across hosts, but a same-host redirect would keep it and S3
-// answers 400 when a presigned signature and an Authorization header both appear.
+// stripAuthorizationOnRedirect removes credentials when a download redirects. Go already
+// drops the header across hosts, but a same-host redirect would keep it and S3 answers 400
+// when a presigned signature and an Authorization header both appear. It also drops an
+// explicit default port from the new URL, for the reason stripDefaultPort gives.
 func stripAuthorizationOnRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= 5 {
 		return errors.New("too many redirects")
 	}
 
 	req.Header.Del("Authorization")
+	dropDefaultPort(req.URL)
 
 	return nil
+}
+
+// defaultPort is the port a scheme implies when a URL names none, or "" for any other scheme.
+func defaultPort(scheme string) string {
+	switch scheme {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	default:
+		return ""
+	}
+}
+
+// dropDefaultPort removes a port that only repeats the scheme's default, so ":443" on https
+// and ":80" on http, and reports whether it did.
+func dropDefaultPort(u *url.URL) bool {
+	if port := u.Port(); port == "" || port != defaultPort(u.Scheme) {
+		return false
+	}
+
+	// Hostname drops the brackets an IPv6 literal needs.
+	host := u.Hostname()
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+
+	u.Host = host
+
+	return true
 }
 
 // resolve turns an API-relative path into an absolute URL. Paths must be relative and are
@@ -234,8 +272,6 @@ type request struct {
 	contentType   string
 	// timeout replaces the client's request timeout for this call. Zero means the client's.
 	timeout time.Duration
-	// absoluteURL bypasses path resolution, for following an absolute `next` link.
-	absoluteURL string
 	// replayable marks a POST that is safe to send twice. Every other method is already.
 	replayable bool
 }
@@ -292,15 +328,9 @@ func (c *Client) do(ctx context.Context, req request, out any) error {
 // doRaw performs req and returns the successful response with its body unread. The caller
 // owns closing it.
 func (c *Client) doRaw(ctx context.Context, req request) (*http.Response, error) {
-	target := req.absoluteURL
-
-	if target == "" {
-		resolved, err := c.resolve(req.path, req.query)
-		if err != nil {
-			return nil, err
-		}
-
-		target = resolved
+	target, err := c.resolve(req.path, req.query)
+	if err != nil {
+		return nil, err
 	}
 
 	attempt := 0

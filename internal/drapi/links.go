@@ -21,7 +21,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -98,8 +98,12 @@ func (c *Client) OpenBlob(ctx context.Context, signedURL string, offset int64) (
 		return nil, 0, err
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
+		cancel()
+
 		return nil, 0, fmt.Errorf("building blob request: %w", err)
 	}
 
@@ -109,7 +113,7 @@ func (c *Client) OpenBlob(ctx context.Context, signedURL string, offset int64) (
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
 
-	resp, err := c.blob.Do(req)
+	resp, err := c.doBlob(req, cancel)
 	if err != nil {
 		return nil, 0, blobDoError(blobPath, resp, err)
 	}
@@ -187,8 +191,12 @@ func (c *Client) OpenFile(ctx context.Context, containerID, name string, offset 
 // openFileOnce performs one round trip of OpenFile. The returned duration is the server's
 // Retry-After, when it supplied one.
 func (c *Client) openFileOnce(ctx context.Context, target, path string, offset int64) (io.ReadCloser, int64, time.Duration, error) {
+	ctx, cancel := context.WithCancel(ctx)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
+		cancel()
+
 		return nil, 0, 0, fmt.Errorf("building file request: %w", err)
 	}
 
@@ -199,7 +207,7 @@ func (c *Client) openFileOnce(ctx context.Context, target, path string, offset i
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
 
-	resp, err := c.blob.Do(req)
+	resp, err := c.doBlob(req, cancel)
 	if err != nil {
 		return nil, 0, 0, blobDoError(path, resp, err)
 	}
@@ -264,35 +272,83 @@ func checkBlobStatus(resp *http.Response, offset int64) error {
 // all — so the signed value and the sent value disagree and S3 answers
 // SignatureDoesNotMatch. curl strips the port itself, which is why the URL works there and
 // nowhere else.
+//
+// A URL with nothing to strip comes back exactly as given, so its signed query is never
+// re-encoded.
 func stripDefaultPort(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return "", fmt.Errorf("parsing presigned URL: %w", err)
 	}
 
-	port := parsed.Port()
-	if port == "" {
+	if !dropDefaultPort(parsed) {
 		return raw, nil
 	}
-
-	if (parsed.Scheme == "https" && port != "443") || (parsed.Scheme == "http" && port != "80") {
-		return raw, nil
-	}
-
-	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return raw, nil
-	}
-
-	host := parsed.Hostname()
-
-	// Hostname() drops the brackets an IPv6 literal needs.
-	if strings.Contains(host, ":") {
-		host = "[" + host + "]"
-	}
-
-	parsed.Host = host
 
 	return parsed.String(), nil
+}
+
+// doBlob sends a download. The wait for response headers is bounded by the request timeout,
+// and the body by c.stall per read. Git never cancels a helper, so without both a stalled
+// download hangs the fetch forever; a whole-body deadline would instead cut a large pack on
+// a slow link. cancel must cancel req's context; the returned body calls it on Close.
+func (c *Client) doBlob(req *http.Request, cancel context.CancelFunc) (*http.Response, error) {
+	headers := time.AfterFunc(c.timeout, cancel)
+
+	resp, err := c.blob.Do(req)
+	if !headers.Stop() && err != nil {
+		err = fmt.Errorf("no response within %s: %w", c.timeout, err)
+	}
+
+	if err != nil {
+		cancel()
+
+		return resp, err
+	}
+
+	resp.Body = guardStall(resp.Body, cancel, c.stall)
+
+	return resp, nil
+}
+
+// stallGuard cancels a download whose Read waits longer than after. Only time inside Read
+// counts, so a slow consumer is never mistaken for a stalled server.
+type stallGuard struct {
+	io.ReadCloser
+	cancel  context.CancelFunc
+	after   time.Duration
+	timer   *time.Timer
+	stalled atomic.Bool
+}
+
+func guardStall(body io.ReadCloser, cancel context.CancelFunc, after time.Duration) *stallGuard {
+	guard := &stallGuard{ReadCloser: body, cancel: cancel, after: after}
+	guard.timer = time.AfterFunc(after, func() {
+		guard.stalled.Store(true)
+		cancel()
+	})
+	guard.timer.Stop()
+
+	return guard
+}
+
+func (g *stallGuard) Read(p []byte) (int, error) {
+	g.timer.Reset(g.after)
+	n, err := g.ReadCloser.Read(p)
+	g.timer.Stop()
+
+	if err != nil && g.stalled.Load() {
+		err = fmt.Errorf("download stalled: no data for %s: %w", g.after, err)
+	}
+
+	return n, err
+}
+
+func (g *stallGuard) Close() error {
+	g.timer.Stop()
+	defer g.cancel()
+
+	return g.ReadCloser.Close()
 }
 
 // BlobError is a failure fetching a presigned URL. Its body is S3's XML rather than a

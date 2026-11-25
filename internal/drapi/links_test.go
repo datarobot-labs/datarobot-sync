@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -248,4 +249,96 @@ func TestStripDefaultPortPreservesQueryVerbatim(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, strings.Replace(raw, "s3.amazonaws.com:443", "s3.amazonaws.com", 1), got)
+}
+
+// A redirect to a URL with an explicit :443 must lose the port too: SigV4 signed the host
+// without it, so sending it is a SignatureDoesNotMatch.
+func TestRedirectDropsTheDefaultPort(t *testing.T) {
+	t.Parallel()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
+		"https://s3.us-east-1.amazonaws.com:443/bucket/b?X-Amz-Signature=abc", nil)
+	require.NoError(t, err)
+
+	require.NoError(t, stripAuthorizationOnRedirect(req, nil))
+	assert.Equal(t, "s3.us-east-1.amazonaws.com", req.URL.Host)
+}
+
+// A server that never answers fails the download at the request timeout, rather than hang a
+// fetch that Git will never cancel.
+func TestOpenBlobBoundsTheWaitForHeaders(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	client, err := New(Config{Endpoint: srv.URL + "/api/v2", Token: "t", RequestTimeout: 100 * time.Millisecond})
+	require.NoError(t, err)
+
+	// The test's own deadline only stops a regression from hanging the suite.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	started := time.Now()
+
+	_, _, err = client.OpenBlob(ctx, srv.URL+"/b", 0)
+	require.ErrorContains(t, err, "no response within")
+	assert.Less(t, time.Since(started), 2*time.Second)
+}
+
+// A download that stops sending mid-body is abandoned after the stall timeout.
+func TestOpenBlobAbandonsAStalledBody(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		respondRaw(t, w, http.StatusOK, []byte("first bytes"))
+
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			t.Errorf("flushing: %v", err)
+		}
+
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	client.stall = 100 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	body, _, err := client.OpenBlob(ctx, srv.URL+"/b", 0)
+	require.NoError(t, err)
+
+	defer body.Close()
+
+	started := time.Now()
+
+	_, err = io.ReadAll(body)
+	require.ErrorContains(t, err, "stalled")
+	assert.Less(t, time.Since(started), 2*time.Second)
+}
+
+// Only time spent waiting inside Read counts: a consumer that pauses between reads is not a
+// stalled server.
+func TestStallGuardIgnoresASlowConsumer(t *testing.T) {
+	t.Parallel()
+
+	var canceled atomic.Bool
+
+	guard := guardStall(io.NopCloser(strings.NewReader("abcdef")), func() { canceled.Store(true) }, 50*time.Millisecond)
+
+	buf := make([]byte, 2)
+	for range 3 {
+		_, err := guard.Read(buf)
+		require.NoError(t, err)
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	assert.False(t, canceled.Load())
+	require.NoError(t, guard.Close())
+	assert.True(t, canceled.Load(), "Close releases the request context")
 }

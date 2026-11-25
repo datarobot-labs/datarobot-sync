@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,7 +29,7 @@ import (
 )
 
 // The default page is 100 and the cap is 1000, so a listing that ignores `next` silently
-// truncates. This asserts every page is walked and the absolute `next` URL is used verbatim.
+// truncates. This asserts every page is walked and the `next` query is used verbatim.
 func TestListFilesFollowsPagination(t *testing.T) {
 	t.Parallel()
 
@@ -227,4 +228,63 @@ func TestUpdateContainerDistinguishesAbsentAndEmptyTags(t *testing.T) {
 	require.NoError(t, client.UpdateContainer(context.Background(), "abc",
 		ContainerUpdate{Tags: &empty}))
 	assert.JSONEq(t, `[]`, string(body["tags"]), "an empty list must be sent, to clear them")
+}
+
+// A `next` link is the server's own view of itself. Behind a proxy it can be http://, an
+// internal host, missing the endpoint's path prefix, or relative. Only its query is used; the
+// path is the one already requested, on the endpoint, which is where the token belongs.
+func TestEachFileTakesOnlyTheQueryFromTheNextLink(t *testing.T) {
+	t.Parallel()
+
+	for name, next := range map[string]string{
+		"internal host": "http://internal:8080/api/v2/files/abc/allFiles/?offset=1&limit=1&recursive=True",
+		"relative":      "?offset=1&limit=1&recursive=True",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var second atomic.Pointer[string]
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("offset") == "0" {
+					respondOK(t, w, fmt.Sprintf(`{"count":1,"data":[{"fileName":"a"}],"next":%q}`, next))
+
+					return
+				}
+
+				uri := r.URL.RequestURI()
+				second.Store(&uri)
+				respondOK(t, w, `{"count":1,"data":[{"fileName":"b"}],"next":null}`)
+			}))
+			defer srv.Close()
+
+			// The endpoint sits under a proxy path prefix the server does not know about.
+			client, err := New(Config{Endpoint: srv.URL + "/dr/api/v2", Token: "t"})
+			require.NoError(t, err)
+
+			entries, err := client.ListFiles(context.Background(), "abc", ListOptions{})
+			require.NoError(t, err)
+			assert.Len(t, entries, 2)
+
+			require.NotNil(t, second.Load())
+			assert.Equal(t, "/dr/api/v2/files/abc/allFiles/?limit=1&offset=1&recursive=True", *second.Load())
+		})
+	}
+}
+
+// A `next` link that repeats the page just read would loop forever.
+func TestEachFileRefusesANextLinkThatRepeats(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		respondOK(t, w, `{"count":1,"data":[{"fileName":"a"}],"next":"?offset=1&limit=1&recursive=True"}`)
+	}))
+	defer srv.Close()
+
+	_, err := newTestClient(t, srv).ListFiles(context.Background(), "abc", ListOptions{})
+	require.ErrorContains(t, err, "repeats")
+	assert.Equal(t, int32(2), calls.Load())
 }

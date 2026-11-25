@@ -20,8 +20,10 @@ Neither drops into CI, and both re-send bytes that have not changed.
 - `GET files/{id}/allFiles/` returns `fileName` (full relative path), `fileSize`, and
   **`fileChecksum` = SHA-256 hex of the raw bytes**. Confirmed by downloading a file and
   hashing it: exact match. `prefix=` filtering works (the prefix must end in `/`); `limit`
-  defaults to 100 and caps at 1000, so following `next` — an absolute URL, used verbatim —
-  is mandatory.
+  defaults to 100 and caps at 1000, so following `next` is mandatory. `next` is an absolute
+  URL; the client takes only its query, on the path it already requested, because the rest is
+  the server's own view of itself (behind a proxy: http://, an internal host, no path prefix)
+  and the request carries the token. A `next` that repeats the page just read is an error.
 - Downloads are presigned S3 URLs. `POST files/{id}/links/` returns them in batch (validity
   up to 3000s) and they honour `Range` (verified `206`).
 - Uploads are multipart, one request per file, and each costs ~0.2 s even at 8-way

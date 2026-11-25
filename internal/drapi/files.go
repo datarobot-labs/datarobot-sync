@@ -104,10 +104,16 @@ func (c *Client) EachFile(ctx context.Context, containerID string, opts ListOpti
 			return nil
 		}
 
-		// `next` is absolute and already carries limit/offset/recursive, so it is used
-		// verbatim rather than rebuilt — the API spells recursive as "True" in it, and
-		// reconstructing the query would drift from whatever the server intends.
-		req = request{method: http.MethodGet, path: req.path, absoluteURL: page.Next}
+		next, err := nextQuery(page.Next)
+		if err != nil {
+			return err
+		}
+
+		if next.Encode() == req.query.Encode() {
+			return fmt.Errorf("GET %s: the next link repeats the page just read: %s", req.path, page.Next)
+		}
+
+		req.query = next
 		// Reset rather than decode over the previous page: encoding/json treats a JSON
 		// `null` as a no-op on a non-pointer field, so a last page's "next": null would
 		// otherwise leave the prior page's non-empty Next in place and loop forever.
@@ -177,6 +183,20 @@ func (c *Client) DeletePaths(ctx context.Context, containerID string, paths []st
 	}, &out)
 
 	return out, err
+}
+
+// nextQuery takes only the query of a `next` link: the path is the one already requested, and
+// the origin is the endpoint's. The query already carries limit/offset/recursive (the API
+// spells recursive "True" in it), so it is used as given. The rest of the link is the server's
+// own view of itself: behind a proxy it can be http://, an internal host, or miss the path
+// prefix the endpoint has, and the request carries the token.
+func nextQuery(next string) (url.Values, error) {
+	u, err := url.Parse(next)
+	if err != nil {
+		return nil, fmt.Errorf("parsing next link: %w", err)
+	}
+
+	return u.Query(), nil
 }
 
 func ensureTrailingSlash(prefix string) string {
